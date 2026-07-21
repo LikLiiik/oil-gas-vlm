@@ -59,6 +59,10 @@ Phase 5: 聚合输出 (归一化→去重→3D SEG-Y + 标注PNG + report.json)
 ```bash
 # 1) 安装依赖
 pip install -r requirements.txt
+#    geo_adapter 是独立子包，需单独安装（提供 geo-adapter CLI）
+pip install -e 多模态接口/
+#    可选：CIG-Bench 预训练断层/河道检测（cig_fault / cig_channel，需 GPU + 自动下载权重）
+pip install cig-bench
 
 # 2) geo_adapter 前置处理
 geo-adapter prepare --config sample.yaml
@@ -117,17 +121,18 @@ out/
 
 | 变量 | 说明 |
 |------|------|
-| `QWEN_VL_PATH` | Qwen3-VL 模型路径 |
-| `YOLO_WORLD_PATH` | YOLO-World 权重路径（可选，未启用） |
+| `QWEN_VL_PATH` | Qwen3-VL 模型路径（必填，未配置会启动报错） |
+| `OIL_GAS_LOG_LEVEL` | pipeline 日志级别（DEBUG/INFO/WARNING，默认 INFO） |
 
 ## 测试
 
 ```bash
-# 79 个单元测试
+# 93 个单元测试（不加载 VLM，秒级）
 python test/test_pipeline_unit.py      # 19: schema/registry/JSON
 python test/test_io_unit.py            # 12: SEG-Y/几何/exporter
 python test/test_adapter_unit.py       # 14: adapter/tasks/aggregate
 python test/test_downstream_unit.py    # 34: 下游模型+输出格式
+python test/test_loop_unit.py          # 14: fake-VLM 闭环/假阳性过滤/仅重跑目标 step
 
 # 端到端
 CUDA_VISIBLE_DEVICES=1 python -m pipeline --run-dir runs/<sample>

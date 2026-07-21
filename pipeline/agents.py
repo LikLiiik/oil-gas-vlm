@@ -3,15 +3,37 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from typing import Any
 
 from schemas.output_schemas import (
-    WORKFLOW_PLAN_SCHEMA, WORKFLOW_VERIFICATION_SCHEMA,
+    WORKFLOW_PLAN_SCHEMA,
+    WORKFLOW_VERIFICATION_SCHEMA,
 )
 
 from . import downstream
+from .loop_core import (
+    apply_retry,
+    ensure_bbox_norm,
+    match_false_positives,
+    tag_detection,
+)
 from .prompts import VERIFICATION_PROMPT, workflow_planning_prompt
 from .vlm import VLMClient
+
+
+def _dedup_by_det_id(dets: list[dict]) -> list[dict]:
+    """按 det_id 去重，保留 confidence 最高者；无 det_id 的全部保留。"""
+    best: dict[str, dict] = {}
+    no_id: list[dict] = []
+    for d in dets:
+        rid = d.get("det_id")
+        if rid is None:
+            no_id.append(d)
+            continue
+        prev = best.get(rid)
+        if prev is None or float(d.get("confidence", 0.0) or 0.0) \
+                > float(prev.get("confidence", 0.0) or 0.0):
+            best[rid] = d
+    return list(best.values()) + no_id
 
 
 @dataclass
@@ -90,17 +112,16 @@ class LoopAgent:
         ver_data: dict | None = None
         for iteration in range(max_iter):
             self._log(f"\n[{agent_name}] Phase 2: 执行下游模型 (iter {iteration+1}/{max_iter})")
-            round_results = self._execute_steps(steps, image)
+            round_results = self._execute_steps(steps, image, agent_name)
             if not round_results:
                 self._log("  No results, skip verification")
                 break
-            result.results.extend(round_results)
 
             self._log(f"\n[{agent_name}] Phase 3: VLM 验证 (iter {iteration+1}/{max_iter})")
             user_text = (
                 f"Workflow: {json.dumps(steps, ensure_ascii=False)}\n"
-                f"Results: {json.dumps(round_results, ensure_ascii=False)}\n"
-                "逐条验证检测结果。仅输出JSON。"
+                f"Results (每条含 det_id): {json.dumps(round_results, ensure_ascii=False)}\n"
+                "逐条验证检测结果，verified[].result_id 必须填该条检测的 det_id 原值。仅输出JSON。"
             )
             ver_resp = self.vlm.call_json(
                 VERIFICATION_PROMPT, [image], user_text,
@@ -118,16 +139,35 @@ class LoopAgent:
             verified = ver_data.get("verified", [])
             real = sum(1 for v in verified if v.get("is_real"))
             fp = sum(1 for v in verified if not v.get("is_real"))
+
+            # 过滤假阳性：det_id 精确匹配，回退 bbox-IoU；高置信才删，存疑进 review
+            drop_ids, dropped, review = match_false_positives(ver_data, round_results)
+            if drop_ids:
+                round_results = [r for r in round_results
+                                 if r.get("det_id") not in drop_ids]
+                self._log(f"  🗑 过滤假阳性 {len(drop_ids)} 条: {sorted(drop_ids)}")
+            if review:
+                self._log(f"  ⚠️ 存疑 {len(review)} 条(低置信/未匹配, 保留): "
+                          f"{[r['det_id'] for r in review]}")
+            result.results.extend(round_results)
+
             self._log(f"  ✅ Verified ({ver_resp.elapsed_s:.0f}s, "
                       f"attempts={ver_resp.attempts})")
             self._log(f"  Real: {real} | FalsePositive: {fp} | "
                       f"NeedRetry: {ver_data.get('need_retry')}")
-            result.verifications.append(
-                {"iteration": iteration + 1, "verification": ver_data}
-            )
+            result.verifications.append({
+                "iteration": iteration + 1,
+                "real": real, "false_positive": fp,
+                "filtered": {"dropped": dropped, "review": review},
+                "filtered_ids": sorted(drop_ids),   # 向后兼容旧字段
+                "verification": ver_data,
+            })
             if not ver_data.get("need_retry"):
                 break
-            self._apply_retry(steps, ver_data.get("retry_instructions") or {})
+            apply_retry(steps, ver_data.get("retry_instructions") or {})
+
+        # 跨迭代同一 det_id 可能重复累积（每轮重跑全部 step），按 det_id 去重保留高置信
+        result.results = _dedup_by_det_id(result.results)
 
         result.ok = (
             bool(result.plan)
@@ -138,7 +178,8 @@ class LoopAgent:
         result.output = ver_data  # 最后一轮验证结论作为 Agent 的对外输出
         return result
 
-    def _execute_steps(self, steps: list[dict], image) -> list[dict]:
+    def _execute_steps(self, steps: list[dict], image,
+                      agent_name: str = "agent") -> list[dict]:
         results = []
         for step in steps:
             model_name = step.get("model")
@@ -154,23 +195,17 @@ class LoopAgent:
                 self._log(f"    ❌ {model_name} failed: {e}")
                 continue
             self._log(f"    → {len(out)} results")
-            for r in out:
+            w, h = image.size
+            tagged = []
+            for i, d in enumerate(out):
+                t = tag_detection(d, step=step_num or 0, image_name=agent_name,
+                                  model_name=model_name, index=i)
+                ensure_bbox_norm(t, w, h)
+                tagged.append(t)
+            for r in tagged:
                 self._log(f"      {str(r)[:120]}")
-            results.extend(out)
+            results.extend(tagged)
         return results
-
-    @staticmethod
-    def _apply_retry(steps: list[dict], retry: dict):
-        target_step = retry.get("step")
-        adjusted = retry.get("adjusted_params") or retry.get("adjusted_instruction")
-        if target_step is None or adjusted is None:
-            return
-        for s in steps:
-            if s.get("step") == target_step:
-                if isinstance(adjusted, dict):
-                    s["instruction"] = {**s.get("instruction", {}), **adjusted}
-                else:
-                    s["instruction"] = adjusted
 
 
 class SingleShotAgent:

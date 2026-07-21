@@ -9,10 +9,11 @@ import warnings
 from dataclasses import dataclass
 from typing import Any
 
-DEFAULT_MODEL_PATH = os.environ.get(
-    "QWEN_VL_PATH",
-    "/data/yxjiang/modelscope/hub/models/Qwen/Qwen3-VL-8B-Instruct",
-)
+from ._logging import get_logger
+
+_logger = get_logger("vlm")
+
+DEFAULT_MODEL_PATH = os.environ.get("QWEN_VL_PATH")
 
 
 def extract_json(text: str) -> dict | None:
@@ -62,9 +63,9 @@ class VLMResponse:
 class VLMClient:
     """Qwen3-VL 客户端。惰性加载，进程内单例可复用。"""
 
-    def __init__(self, model_path: str = DEFAULT_MODEL_PATH,
+    def __init__(self, model_path: str | None = None,
                  dtype: str = "bfloat16", device_map: str = "auto"):
-        self.model_path = model_path
+        self.model_path = model_path or DEFAULT_MODEL_PATH
         self.dtype = dtype
         self.device_map = device_map
         self._model = None
@@ -73,11 +74,16 @@ class VLMClient:
     def load(self):
         if self._model is not None:
             return
+        if not self.model_path:
+            raise RuntimeError(
+                "Qwen3-VL 模型路径未配置：请设置环境变量 QWEN_VL_PATH 指向 "
+                "Qwen3-VL-8B-Instruct 目录，或在 VLMClient(model_path=...) 显式传入。"
+            )
         warnings.filterwarnings("ignore")
         import torch
-        from transformers import Qwen3VLForConditionalGeneration, AutoProcessor
+        from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
         torch_dtype = getattr(torch, self.dtype)
-        print(f"[VLM] loading {self.model_path} ...")
+        _logger.info(f"[VLM] loading {self.model_path} ...")
         self._model = Qwen3VLForConditionalGeneration.from_pretrained(
             self.model_path, torch_dtype=torch_dtype,
             device_map=self.device_map, trust_remote_code=True,

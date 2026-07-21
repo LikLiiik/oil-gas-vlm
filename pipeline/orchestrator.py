@@ -6,26 +6,27 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from schemas.output_schemas import (
-    FUSION_OUTPUT_SCHEMA, PROSPECT_OUTPUT_SCHEMA,
+    FUSION_OUTPUT_SCHEMA,
+    PROSPECT_OUTPUT_SCHEMA,
 )
 
+from ._logging import get_logger
 from .agents import AgentResult, LoopAgent, SingleShotAgent
+from .loop_core import (
+    apply_retry,
+    bbox_iou,
+    ensure_bbox_norm,
+    match_false_positives,
+    tag_detection,
+)
 from .prompts import (
-    prospect_evaluation_prompt, seismic_interp_prompt,
-    log_analysis_prompt, well_seismic_fusion_prompt,
-    VERIFICATION_PROMPT, TASK_MODEL_MAP, workflow_planning_prompt,
+    TASK_MODEL_MAP,
+    VERIFICATION_PROMPT,
+    prospect_evaluation_prompt,
+    well_seismic_fusion_prompt,
+    workflow_planning_prompt,
 )
 from .vlm import VLMClient
-
-
-def _bbox_iou(a: list[float], b: list[float]) -> float:
-    """两个 [x1,y1,x2,y2] bbox 的 IoU。"""
-    xo = max(0, min(a[2], b[2]) - max(a[0], b[0]))
-    yo = max(0, min(a[3], b[3]) - max(a[1], b[1]))
-    inter = xo * yo
-    area_a = (a[2] - a[0]) * (a[3] - a[1])
-    area_b = (b[2] - b[0]) * (b[3] - b[1])
-    return inter / (area_a + area_b - inter + 1e-8)
 
 
 @dataclass
@@ -52,6 +53,7 @@ class Pipeline:
     def __init__(self, vlm: VLMClient | None = None, verbose: bool = True):
         self.vlm = vlm or VLMClient()
         self.verbose = verbose
+        self._logger = get_logger("orchestrator")
         self.loop_agent = LoopAgent(self.vlm, verbose=verbose)
         self.fusion_agent = SingleShotAgent(
             self.vlm, "well_seismic_fusion",
@@ -64,12 +66,11 @@ class Pipeline:
 
     def _log(self, msg: str):
         if self.verbose:
-            print(msg)
+            self._logger.info(msg)
 
     def run_from_adapter(self, run_dir, out_dir=None,
                          verify: bool = True,
-                         max_iterations: int = 3,
-                         yolo_conf: float = 0.25) -> dict:
+                         max_iterations: int = 3) -> dict:
         """赛题主入口：吃 geo_adapter 的 runs/<sample_id>/ 目录。
 
         统一闭环:
@@ -77,22 +78,25 @@ class Pipeline:
                    → 自主规划 workflow_steps（选模型+参数+目标图像）
           Phase 2: 逐个执行 workflow_steps（调用对应的下游模型）
           Phase 3: VLM 验证——把下游结果+原图喂回 VLM，逐条判断真伪
-          Phase 4: 如果 need_retry → 调整参数回到 Phase 2（最多 max_iterations 轮）
+          Phase 4: 如果 need_retry → 调整参数回到 Phase 2 仅重跑被调整的那一个 step（最多 max_iterations 轮）
           Phase 5: 收敛后 → bbox 坐标反变换 → 3D 属性 SEG-Y + 标注 PNG
         """
         import numpy as np
 
-        from . import downstream, tasks as tasks_mod
+        from schemas.output_schemas import (
+            WORKFLOW_PLAN_SCHEMA,
+        )
+
+        from . import downstream
         from . import exporter as exporter_mod
-        from .adapter import PackageImage, build_vlm_user_text, load_run
+        from . import tasks as tasks_mod
+        from .adapter import load_run
         from .exporter import (
-            aggregate_adapter_detections, export_annotated_png,
+            aggregate_adapter_detections,
+            export_annotated_png,
             summary_report,
         )
         from .io.segy import SegyVolume, write_attribute_segy
-        from schemas.output_schemas import (
-            WORKFLOW_PLAN_SCHEMA, WORKFLOW_VERIFICATION_SCHEMA,
-        )
 
         pkg = load_run(run_dir)
         if not pkg.images:
@@ -149,73 +153,19 @@ class Pipeline:
 
         # ── Phase 2+3+4: 执行 → 验证 → 迭代 ──────────────────────────
         max_iter = min(plan.get("max_iterations", max_iterations), max_iterations)
+        step_results, verifications, _ = self._run_closed_loop(
+            steps, image_by_name, pkg,
+            verify=verify, max_iter=max_iter,
+        )
+
+        # 重建 all_detections：按 image_name 聚合 step_results（已剔除假阳性）
         all_detections: dict[str, list[dict]] = {}
-        verifications: list[dict] = []
-        total_elapsed = plan_resp.elapsed_s
-
-        for iteration in range(max_iter):
-            self._log(f"\n[adapter] Phase 2: 执行下游模型 "
-                      f"(iter {iteration+1}/{max_iter})")
-
-            round_dets = self._execute_competition_steps(
-                steps, image_by_name, pkg,
-            )
-            # 合并到 all_detections（同一 image 同一 class 取 max confidence）
-            for img_name, dets in round_dets.items():
-                if img_name not in all_detections:
-                    all_detections[img_name] = []
-                all_detections[img_name].extend(dets)
-            n_dets = sum(len(v) for v in round_dets.values())
-            if self.verbose:
-                models_used = set(
-                    d.get("model", "?") for v in round_dets.values() for d in v
-                )
-                print(f"  {n_dets} detections from models: {models_used}")
-
-            if not verify or n_dets == 0:
-                break
-
-            # Phase 3: VLM 验证
-            self._log(f"\n[adapter] Phase 3: VLM 验证 "
-                      f"(iter {iteration+1}/{max_iter})")
-            ver_text = (
-                f"原始工作流计划:\n{json.dumps(steps, ensure_ascii=False)[:3000]}\n\n"
-                f"下游模型实际检测结果:\n"
-                f"{json.dumps(round_dets, ensure_ascii=False)[:4000]}\n\n"
-                "请逐条对照原图验证每条检测。仅输出JSON。"
-            )
-            ver_resp = self.vlm.call_json(
-                VERIFICATION_PROMPT,
-                [im.pil for im in pkg.images],
-                ver_text,
-                schema=WORKFLOW_VERIFICATION_SCHEMA,
-                max_new_tokens=4096,
-                temperature=0.0,
-            )
-            total_elapsed += ver_resp.elapsed_s
-            if ver_resp.data is None:
-                self._log(f"  ❌ 验证失败: {ver_resp.schema_errors}")
-                break
-            ver_data = ver_resp.data
-            verified = ver_data.get("verified", [])
-            real_n = sum(1 for v in verified if v.get("is_real"))
-            fp_n = sum(1 for v in verified if not v.get("is_real"))
-            verifications.append({
-                "iteration": iteration + 1,
-                "real": real_n, "false_positive": fp_n,
-                "verification": ver_data,
-            })
-            self._log(f"  ✅ 验证: {real_n} real, {fp_n} false positive, "
-                      f"need_retry={ver_data.get('need_retry')} "
-                      f"({ver_resp.elapsed_s:.0f}s)")
-
-            if not ver_data.get("need_retry"):
-                break
-            # Phase 4: 应用重试指令
-            self._apply_competition_retry(steps, ver_data)
+        for dets in step_results.values():
+            for d in dets:
+                all_detections.setdefault(d.get("image_name", ""), []).append(d)
 
         # ── Phase 5: 聚合输出 ────────────────────────────────────────
-        self._log(f"\n[adapter] Phase 5: 聚合输出")
+        self._log("\n[adapter] Phase 5: 聚合输出")
 
         # 5a: 归一化——各模型不同输出格式 → 统一 {class_name, bbox_norm, confidence}
         n_raw = sum(len(v) for v in all_detections.values())
@@ -227,7 +177,7 @@ class Pipeline:
         normalized = self._dedup_detections(normalized)
         n_total_dets = sum(len(v) for v in normalized.values())
         if self.verbose and n_before_dedup != n_total_dets:
-            print(f"  dedup: {n_before_dedup} → {n_total_dets} detections")
+            self._logger.info(f"  dedup: {n_before_dedup} → {n_total_dets} detections")
         self._log(f"  normalized+dedup: {n_raw} raw → {n_total_dets} detections")
 
         # 5c: 坐标反变换 → 3D 属性 SEG-Y
@@ -252,7 +202,7 @@ class Pipeline:
                     write_attribute_segy(fake_vol, cube, str(out_path))
                     attr_sgy_paths[cls] = str(out_path)
                 except Exception as e:
-                    print(f"  [SEG-Y write failed for {cls}: {e}]")
+                    self._logger.warning(f"  [SEG-Y write failed for {cls}: {e}]")
 
         # 5d: 标注 PNG —— 用归一化后的 dets (已有正确的 class_name)
         png_paths: list[str] = []
@@ -357,52 +307,131 @@ class Pipeline:
             plan_text += rag_knowledge
         return plan_text
 
-    def _execute_competition_steps(self, steps: list[dict],
-                                    image_by_name: dict,
-                                    pkg) -> dict[str, list[dict]]:
-        """执行 competition workflow_steps。返回 {image_name: [detections]}。
+    def _run_closed_loop(self, steps, image_by_name, pkg, *,
+                         verify: bool, max_iter: int):
+        """Phase 2+3+4: 执行 -> 验证 -> 过滤假阳性 -> 仅重跑被调整的 step -> 收敛。
 
-        与 LoopAgent._execute_steps 不同，这里每步可以指定不同的 image_name，
-        且会把 context 里的 array 数据传给下游模型。
+        返回 (step_results, verifications, total_elapsed):
+          step_results: {step_num: [det,...]} 每条 det 已打 det_id 且已剔除假阳性。
+          verifications: 每轮验证摘要（含被过滤的 det_id 列表）。
         """
+        from schemas.output_schemas import WORKFLOW_VERIFICATION_SCHEMA
+
         from . import downstream
-        detections: dict[str, list[dict]] = {}
 
-        for step in steps:
-            model_name = step.get("model")
-            instruction = step.get("instruction") or {}
-            image_name = step.get("image_name", "")
-            step_num = step.get("step", "?")
+        verify_images = [im.pil for im in image_by_name.values()]
 
-            # 解析目标图像
-            im = image_by_name.get(image_name)
-            if im is None:
-                # fallback: 用第一张图
-                im = next(iter(image_by_name.values()), None)
-            if im is None:
-                continue
+        step_results: dict[int, list[dict]] = {}
+        verifications: list[dict] = []
+        total_elapsed = 0.0
+        run_queue: list[dict] | None = None  # None => 首轮跑全部 step
 
-            model = downstream.get(model_name)
-            if model is None:
-                self._log(f"  ⚠️ Step{step_num}: unknown '{model_name}', skip")
-                continue
+        for iteration in range(max_iter):
+            current_steps = run_queue if run_queue is not None else steps
+            self._log(f"\n[adapter] Phase 2: 执行下游模型 "
+                      f"(iter {iteration+1}/{max_iter}, "
+                      f"{len(current_steps)} step)")
 
-            self._log(f"  Step{step_num}: {model_name} on {im.name} ...")
+            # ── Phase 2: 执行本轮 step（替换该 step 的历史结果）──
+            for step in current_steps:
+                step_num = step.get("step")
+                model_name = step.get("model")
+                image_name = step.get("image_name", "")
+                im = image_by_name.get(image_name) \
+                    or next(iter(image_by_name.values()), None)
+                if im is None:
+                    continue
+                model = downstream.get(model_name)
+                if model is None:
+                    self._log(f"  ⚠️ Step{step_num}: unknown '{model_name}', skip")
+                    step_results[step_num] = []
+                    continue
+                self._log(f"  Step{step_num}: {model_name} on {im.name} ...")
+                ctx = self._build_step_context(im, pkg) if pkg is not None else None
+                try:
+                    out = model.detect(step.get("instruction") or {},
+                                       image=im.pil, context=ctx)
+                except Exception as e:
+                    self._log(f"    ❌ {model_name} failed: {e}")
+                    out = []
+                w, h = im.pil.size
+                tagged = []
+                for i, d in enumerate(out):
+                    t = tag_detection(d, step=step_num, image_name=im.name,
+                                      model_name=model_name, index=i)
+                    ensure_bbox_norm(t, w, h)
+                    tagged.append(t)
+                step_results[step_num] = tagged
+                self._log(f"    -> {len(tagged)} results")
 
-            # 构建 context（传递原始数组数据给下游模型）
-            ctx = self._build_step_context(im, pkg)
+            # 本轮刚跑出的检测（用于验证）
+            round_dets = [d for s in current_steps
+                          for d in step_results.get(s.get("step"), [])]
+            n_dets = len(round_dets)
+            if self.verbose:
+                models_used = set(d.get("model", "?") for d in round_dets)
+                self._log(f"  {n_dets} detections from models: {models_used}")
+            if not verify or n_dets == 0:
+                break
 
-            try:
-                out = model.detect(instruction, image=im.pil, context=ctx)
-            except Exception as e:
-                self._log(f"    ❌ {model_name} failed: {e}")
-                continue
+            # ── Phase 3: VLM 验证（喂回本轮检测，含 det_id）──
+            self._log(f"\n[adapter] Phase 3: VLM 验证 "
+                      f"(iter {iteration+1}/{max_iter})")
+            ver_text = (
+                f"原始工作流计划:\n{json.dumps(steps, ensure_ascii=False)[:3000]}\n\n"
+                f"本轮下游检测结果（每条含 det_id 字段）:\n"
+                f"{json.dumps(round_dets, ensure_ascii=False)[:4000]}\n\n"
+                "请逐条对照原图验证。verified[].result_id 必须填该条检测的 det_id 原值"
+                "（判假的会被丢弃）。仅输出JSON。"
+            )
+            ver_resp = self.vlm.call_json(
+                VERIFICATION_PROMPT, verify_images, ver_text,
+                schema=WORKFLOW_VERIFICATION_SCHEMA,
+                max_new_tokens=4096, temperature=0.0,
+            )
+            total_elapsed += ver_resp.elapsed_s
+            if ver_resp.data is None:
+                self._log(f"  ❌ 验证失败: {ver_resp.schema_errors}")
+                break
+            ver_data = ver_resp.data
+            verified = ver_data.get("verified", [])
+            real_n = sum(1 for v in verified if v.get("is_real"))
+            fp_n = sum(1 for v in verified if not v.get("is_real"))
 
-            self._log(f"    → {len(out)} results")
-            if out:
-                detections.setdefault(im.name, []).extend(out)
+            # ── 过滤假阳性：det_id 精确匹配，回退 bbox-IoU；高置信才删，存疑进 review ──
+            drop_ids, dropped, review = match_false_positives(ver_data, round_dets)
+            if drop_ids:
+                for s in current_steps:
+                    sn = s.get("step")
+                    step_results[sn] = [d for d in step_results.get(sn, [])
+                                        if d.get("det_id") not in drop_ids]
+                self._log(f"  🗑 过滤假阳性 {len(drop_ids)} 条: {sorted(drop_ids)}")
+            if review:
+                self._log(f"  ⚠️ 存疑 {len(review)} 条(低置信/未匹配, 保留): "
+                          f"{[r['det_id'] for r in review]}")
 
-        return detections
+            verifications.append({
+                "iteration": iteration + 1,
+                "real": real_n, "false_positive": fp_n,
+                "filtered": {"dropped": dropped, "review": review},
+                "filtered_ids": sorted(drop_ids),   # 向后兼容旧字段
+                "verification": ver_data,
+            })
+            self._log(f"  ✅ 验证: {real_n} real, {fp_n} fp(过滤 {len(drop_ids)}), "
+                      f"need_retry={ver_data.get('need_retry')} "
+                      f"({ver_resp.elapsed_s:.0f}s)")
+
+            if not ver_data.get("need_retry"):
+                break
+
+            # ── Phase 4: 应用重试指令，下一轮只重跑被调整的那一个 step ──
+            target = apply_retry(steps, ver_data.get("retry_instructions") or {})
+            if target is None:
+                break
+            run_queue = [s for s in steps if s.get("step") == target]
+
+        return step_results, verifications, total_elapsed
+
 
     @staticmethod
     def _build_step_context(image, pkg) -> dict | None:
@@ -435,7 +464,6 @@ class Pipeline:
         detections_by_image: dict[str, list[dict]],
     ) -> dict[str, list[dict]]:
         """对每张图的检测去重：同一 class_name + 相近 bbox → 取 max confidence。"""
-        import numpy as np
         result: dict[str, list[dict]] = {}
         for img_name, dets in detections_by_image.items():
             if not dets:
@@ -461,7 +489,7 @@ class Pipeline:
                         b2 = k.get("bbox_norm") or k.get("bbox_pixel")
                         if not b2:
                             continue
-                        iou = _bbox_iou(b1, b2)
+                        iou = bbox_iou(b1, b2)
                         if iou > 0.5:
                             is_dup = True
                             break
@@ -471,20 +499,6 @@ class Pipeline:
             result[img_name] = deduped
         return result
 
-    @staticmethod
-    def _apply_competition_retry(steps: list[dict], ver_data: dict):
-        """把 VLM 验证给出的 retry_instructions 应用到对应 step。"""
-        retry = ver_data.get("retry_instructions") or {}
-        target = retry.get("step")
-        adjusted = retry.get("adjusted_params") or retry.get("adjusted_instruction")
-        if target is None or not adjusted:
-            return
-        for s in steps:
-            if s.get("step") == target:
-                if isinstance(adjusted, dict):
-                    s["instruction"] = {**s.get("instruction", {}), **adjusted}
-                break
-
     # ============================================================
     # Fallback: 不经 geo_adapter，直读 SEG-Y
     # ============================================================
@@ -492,7 +506,7 @@ class Pipeline:
     def run_slice_for_tasks(self, image, geom, tasks: list[str],
                             out_dir=None) -> dict:
         from . import tasks as tasks_mod
-        from .exporter import build_slice_mask, export_annotated_png, export_json
+        from .exporter import export_annotated_png, export_json
         out: dict[str, dict] = {}
         for tname in tasks:
             spec = tasks_mod.get(tname)
@@ -512,10 +526,14 @@ class Pipeline:
                    slice_stride: int = 5,
                    out_dir=None) -> dict:
         import numpy as np
+
         from . import tasks as tasks_mod
         from .exporter import (
-            build_slice_mask, export_annotated_png, export_json,
-            export_volume_attribute, summary_report,
+            build_slice_mask,
+            export_annotated_png,
+            export_json,
+            export_volume_attribute,
+            summary_report,
         )
         from .io.render import render_slice
         from .io.segy import extract_inline_slice, extract_xline_slice
@@ -577,7 +595,7 @@ class Pipeline:
                         volume, per_slice_masks, spec, out_dir,
                         slice_axis=slice_axis))
                 except Exception as e:
-                    print(f"  [export_volume_attribute failed: {e}]")
+                    self._logger.warning(f"  [export_volume_attribute failed: {e}]")
             report["tasks"][tname] = {
                 "slices": per_slice_report,
                 "attribute_sgy": attr_path,

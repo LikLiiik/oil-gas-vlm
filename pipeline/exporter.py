@@ -182,7 +182,6 @@ def normalize_detection_format(
     """把 8 个下游模型的各异输出格式统一为 {bbox_norm, class_name, confidence}。
 
     各模型原始输出:
-      - yolo_world: 已有 bbox_norm → 直通
       - seismic_domain_model: bbox_pixel → /image_size → bbox_norm
       - sam: bbox_pixel → /image_size → bbox_norm
       - horizon_tracker: points[{trace_idx, sample_idx}] → min/max → bbox_norm

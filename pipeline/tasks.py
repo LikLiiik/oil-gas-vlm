@@ -18,7 +18,7 @@ class GeologicalTask:
     name: str
     yolo_classes: list[str]
     description: str
-    downstream_hint: str            # yolo_world | sam | traditional_code | ...
+    downstream_hint: str            # sam | traditional_code | seismic_domain_model | ...
     recommended_model: str          # 在 workflow_planning 时的首选模型
     overlay_color: str              # matplotlib color name / hex
     attribute_default: float = 0.0  # 属性体未检测区域的取值

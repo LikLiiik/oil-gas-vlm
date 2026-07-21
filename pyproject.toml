@@ -1,0 +1,26 @@
+# 根项目工程配置。`多模态接口/` 是独立子包，有自己的 pyproject.toml，这里 extend-exclude 掉。
+[tool.ruff]
+line-length = 88
+extend-exclude = [
+    "多模态接口",   # 独立子包，自带 ruff 配置
+    "weights",
+    "runs",
+    "out",
+    "*.egg-info",
+]
+
+[tool.ruff.lint]
+# 起步规则集：保持轻量，避免一次性大规模 reformat 引入噪声 diff。
+select = ["E", "F", "W", "I", "UP", "B"]
+ignore = [
+    "E501",   # 行长由 line-length 软约束，不强制报错
+    "E741",   # 单字母变量名（地质/数学语境常见 l/i/I）
+    "B008",   # 函数默认值里构造对象（部分 dataclass 场景需要）
+]
+
+[tool.ruff.lint.per-file-ignores]
+"test/*" = ["F401"]      # 测试里常有意保留未使用 import
+"pipeline/downstream/*" = ["E402"]  # 下游模型惰性 import 在函数内，顺序有理由
+
+[tool.ruff.format]
+quote-style = "double"

@@ -597,6 +597,8 @@ WORKFLOW_VERIFICATION_SCHEMA = {
                     "step":              {"type": "integer"},
                     "model":             {"type": "string"},
                     "result_id":         {"type": "string"},
+                    "bbox_xyxy_norm":    {"type": "array", "minItems": 4, "maxItems": 4,
+                                          "items": {"type": "number"}},
                     "is_real":           {"type": "boolean"},
                     "confidence":        {"type": "number",
                                           "minimum": 0.0, "maximum": 1.0},

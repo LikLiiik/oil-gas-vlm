@@ -1,3 +1,7 @@
+> **归档说明（2026-07-21）**：本文档记录的是 Qwen3.5-9B 时代的 prompt 调参笔记，
+> 项目已切换到 Qwen3-VL-8B + 11 下游模型闭环架构。保留作历史参考，不代表当前实现。
+> 最新架构见 README.md 与 docs/PIPELINE_TECHNICAL_DOC.md。
+
 # 迭代记录 — VLM Prompt 测试与优化
 
 ## 测试环境
