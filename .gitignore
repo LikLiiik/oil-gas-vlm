@@ -6,6 +6,11 @@ __pycache__/
 dist/
 build/
 
+# Secrets / local config（必须不提交；.env.example 是模板，照常保留）
+.env
+.env.*
+!.env.example
+
 # Model weights
 *.safetensors
 *.bin
@@ -38,6 +43,7 @@ Thumbs.db
 
 # Test outputs
 /tmp/
+out/
 *.log
 
 # Large PDF
