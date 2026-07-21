@@ -1,0 +1,25 @@
+well_location:
+  well_id: [WELL, WELL_NAME, WELL_ID, 井名]
+  x: [X, EASTING, WELL_X, X坐标]
+  y: [Y, NORTHING, WELL_Y, Y坐标]
+  longitude: [LON, LONGITUDE, 经度]
+  latitude: [LAT, LATITUDE, 纬度]
+  kb: [KB, KB_ELEV, 补心海拔]
+  ground_elevation: [GL, GROUND_ELEVATION, 地面海拔]
+  total_depth: [TD, TOTAL_DEPTH, 完钻井深]
+trajectory:
+  well_id: [WELL, WELL_NAME, WELL_ID, 井名]
+  md: [MD, MEASURED_DEPTH, 测量井深]
+  tvd: [TVD, TRUE_VERTICAL_DEPTH, 垂深]
+  tvdss: [TVDSS]
+  inclination: [INC, INCLINATION, 井斜角]
+  azimuth: [AZI, AZIMUTH, 方位角]
+  x_offset: [DX, X_OFFSET, X偏移量]
+  y_offset: [DY, Y_OFFSET, Y偏移量]
+  x_absolute: [X, EASTING]
+  y_absolute: [Y, NORTHING]
+time_depth:
+  depth: [DEPTH, MD, TVD, TVDSS, 深度]
+  twt_ms: [TWT_MS, TWT, TWO_WAY_TIME_MS, 双程时间]
+  owt_ms: [OWT_MS, OWT, ONE_WAY_TIME_MS, 单程时间]
+

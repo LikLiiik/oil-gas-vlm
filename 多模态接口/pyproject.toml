@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "geo-multimodal-input-adapter"
+version = "0.1.0"
+description = "Conservative input adapter for geophysical multimodal workflows"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+  "numpy>=1.24",
+  "pandas>=2.0",
+  "matplotlib>=3.7",
+  "pydantic>=2.5",
+  "PyYAML>=6.0",
+  "typer>=0.12",
+  "rich>=13.0",
+  "jsonschema>=4.19",
+]
+
+[project.optional-dependencies]
+las = ["lasio>=0.31"]
+segy = ["segyio>=1.9"]
+crs = ["pyproj>=3.6"]
+science = ["scipy>=1.10"]
+all = ["lasio>=0.31", "segyio>=1.9", "pyproj>=3.6", "scipy>=1.10"]
+test = ["pytest>=8.0"]
+
+[project.scripts]
+geo-adapter = "geo_adapter.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+geo_adapter = ["resources/*.yaml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-ra"

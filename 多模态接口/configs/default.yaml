@@ -1,0 +1,27 @@
+schema_version: "1.0"
+coordinate_system:
+  project_crs: null
+  allow_unknown_crs: true
+  require_explicit_crs_for_precise_alignment: true
+depth_reference:
+  well_log_axis: MD
+  unit: m
+  reference_surface: KB
+  positive_direction: down
+  vertical_datum: MSL
+  tvdss_sign_convention: positive_below_sea_level
+processing:
+  seismic:
+    views: [inline, crossline, slice, local_patch]
+    percentile_clip: {lower: 1.0, upper: 99.0}
+    normalization: symmetric
+  well_logs:
+    resample_step: null
+    short_gap_interpolation: {enabled: true, max_gap_samples: 3, method: linear}
+  time_depth:
+    preferred_sources: [checkshot, vsp, provided_table, sonic_integrated]
+    sonic_integration: {enabled: true, preferred_depth_axis: TVDSS, require_trajectory_for_deviated_well: true}
+    t0: {policy: per_well, value_ms: null, source: null}
+    replacement_velocity: {policy: per_well, value_m_s: null, source: null}
+    calibration: {required_for_joint_analysis: true, method: null, control_points_path: null}
+
