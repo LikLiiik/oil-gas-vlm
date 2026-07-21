@@ -33,6 +33,20 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 
+def _load_dotenv_silent() -> None:
+    """自动从 .env 加载（如果存在）。失败也无所谓——env 里已有值优先。"""
+    try:
+        from dotenv import load_dotenv  # type: ignore
+        env_path = ROOT / ".env"
+        if env_path.is_file():
+            load_dotenv(env_path, override=False)
+    except ImportError:
+        pass  # 没装 dotenv 也不报错
+
+
+_load_dotenv_silent()
+
+
 def _build_argparser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         description="VLM API 真实冒烟测试（会产生费用）",

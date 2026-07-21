@@ -44,6 +44,7 @@ Thumbs.db
 # Test outputs
 /tmp/
 out/
+runs/
 *.log
 
 # Large PDF

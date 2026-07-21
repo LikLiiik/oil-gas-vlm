@@ -42,6 +42,19 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 
+def _load_dotenv_silent() -> None:
+    try:
+        from dotenv import load_dotenv  # type: ignore
+        env_path = ROOT / ".env"
+        if env_path.is_file():
+            load_dotenv(env_path, override=False)
+    except ImportError:
+        pass
+
+
+_load_dotenv_silent()
+
+
 # ---------------------------------------------------------------------------
 # 后端适配器：负责构造对应后端的 VLMClient
 # ---------------------------------------------------------------------------

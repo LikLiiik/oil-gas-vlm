@@ -136,6 +136,17 @@ def _apply_vlm_cli_overrides(args) -> None:
     """
     import os
 
+    # 1) 先尝试从 .env 加载（不覆盖已有 env）
+    try:
+        from dotenv import load_dotenv  # type: ignore
+        from pathlib import Path
+        env_path = Path(__file__).resolve().parent.parent / ".env"
+        if env_path.is_file():
+            load_dotenv(env_path, override=False)
+    except ImportError:
+        pass
+
+    # 2) CLI 显式参数覆盖（仅当用户传了）
     if getattr(args, "vlm_backend", None):
         os.environ["VLM_BACKEND"] = args.vlm_backend
     if getattr(args, "vlm_model", None):
