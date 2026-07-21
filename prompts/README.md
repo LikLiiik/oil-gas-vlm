@@ -1,22 +1,29 @@
-# Agent Prompt 设计文档 — 下游模型级联架构
+# Agent Prompt 设计文档 — 下游模型级联 + 验证回环架构
 
 ## 架构
 
+VLM 不是一次性发指令，而是**闭环迭代**。下游结果必须返回 VLM 验证。
+
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│  Stage 1: VLM 分析理解（Qwen3-VL-8B）                            │
-│  → 看图像 → 理解场景 → 决定需要检测什么                           │
-│  → 输出: 下游模型可执行的检测指令 (YOLO-World / SAM / ...)        │
-├─────────────────────────────────────────────────────────────────┤
-│  Stage 2: 下游专家模型执行                                        │
-│  → YOLO-World: 开放词汇目标检测 (fault, bright_spot, channel)     │
-│  → SAM/Grounded-SAM: 分割 (horizon, sand_body, salt_dome)        │
-│  → 传统算法: GR阈值 / RT阈值 (±0.1m精度)                          │
-├─────────────────────────────────────────────────────────────────┤
-│  Stage 3: VLM 综合评估                                           │
-│  → 收集下游结果 → 综合分析 → 生成勘探建议                          │
-└─────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│  VLM (大脑)                                                        │
+│  ① 分析图像 → ② 生成下游指令 → ④ 接收结果 → ⑤ 验证/拒绝/重试    │
+└──────┬──────────────────────────────┬────────────────────────────┘
+       │  ② downstream_prompts        │  ④ results (bbox/mask/数值)
+       ▼                              ▼
+┌──────────────────┐    ┌──────────────────┐    ┌──────────────────┐
+│   YOLO-World     │    │   SAM            │    │   传统代码        │
+│   精确检测(bbox) │    │   精确分割(mask) │    │   精确计算(±0.1m)│
+└──────────────────┘    └──────────────────┘    └──────────────────┘
 ```
+
+### 三层 Prompt 设计
+
+| 阶段 | Prompt 类型 | 用途 | 示例 |
+|------|------------|------|------|
+| **Planning** | `downstream_prompts` | VLM→下游：告诉下游检测什么 | `"detect fault in CDP 60-100"` |
+| **Execution** | 下游模型内部 | YOLO/SAM/代码执行检测 | 返回 bbox/mask/数值 |
+| **Verification** | `verification_prompt` | VLM 收到结果后重新验证 | `"bbox at CDP 78: real fault? check image"` |
 
 ## VLM 输出的下游 Prompt 格式
 
@@ -26,9 +33,76 @@
 
 ---
 
+## Verification Prompt（验证回环）— 各Agent共用模式
+
+下游返回结果后，VLM 被再次调用进行地质合理性验证。这是 VLM 发挥最大价值的地方。
+
+### Verification Prompt 模板
+
+```
+原始任务: {planning阶段的上下文}
+下游检测结果: {YOLO的bbox列表 / SAM的mask / 代码的数值}
+
+请重新查看原始图像，逐一验证每个下游检测结果:
+1. 这条检测是否符合地质规律？（断层有错断？亮点有振幅异常？）
+2. 这条检测是否可能是假阳性？（处理噪声？河道边缘？薄互层？）
+3. 如果真实，评估置信度并给出地质解释
+4. 如果虚假，说明原因并建议下游如何修正
+
+输出JSON:
+{"verified": [{"id": "...", "is_real": true/false, "confidence": 0.9,
+                "geological_reason": "同相轴可见约8ms垂直错断",
+                "rejection_reason": null}],
+ "false_positives_removed": 2,
+ "missed_targets": [{"class_name": "...", "search_cdp_range": [110, 130],
+                      "reason": "剖面中可见疑似小断层但YOLO未检测到"}],
+ "refined_prompts": {"yolo_world": {...}}}
+```
+
+### 验证回环示例（SeismicAgent）
+
+```
+Round 1:
+  VLM→YOLO: detect fault in CDP 60-100
+  YOLO→VLM: bbox1(CDP 78-85, conf=0.45), bbox2(CDP 195-202, conf=0.32)
+
+Round 2 (verification):
+  VLM 重新查看原始图像中 bbox1 和 bbox2 的区域:
+  → bbox1: "同相轴可见约8ms垂直错断 ✓ 真断层, confidence=0.9"
+  → bbox2: "只是河道边缘反射终止 ✗ 假阳性, 排除"
+  → 发现 CDP 118-123 处有微小错断遗漏 → 追加检测
+
+Round 3 (refined detection):
+  VLM→YOLO: add detection in CDP 110-130, threshold=0.25
+  YOLO→VLM: bbox3(CDP 118-123, conf=0.28)
+  VLM: "微小错断，可能是伴生断层 ✓ 保留, low confidence"
+
+Round 4 (convergence):
+  no new findings → 输出最终结果
+  faults: [bbox1(conf=0.9), bbox3(conf=0.28)]
+  false_positives_removed: 1 (bbox2)
+```
+
+### 验证回环示例（LogAnalysisAgent）
+
+```
+Round 1:
+  VLM→Code: GR<50 in 1200-1260m
+  Code→VLM: [1200.1, 1247.6, 1248.1, 1255.1]
+
+Round 2 (verification):
+  VLM 检查代码返回的边界:
+  → 1247.6-1248.1m: 仅0.5m间隙，GR短暂回升 → 噪声，合并为单一砂层 1200.1-1255.1m
+  → 1255.1m 边界: GR突增至95 API，DEN和AC也同时跳变 → 确认岩性界面
+
+  调整后: sand_intervals = [(1200.1, 1255.1)]  // 合并了0.5m的假间隔
+```
+
+---
+
 ## Agent 1: SeismicInterpAgent
 
-### VLM → YOLO-World 的 Prompt
+### VLM → YOLO-World 的 Planning Prompt
 
 ```json
 {
