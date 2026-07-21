@@ -393,6 +393,228 @@ PROSPECT_OUTPUT_SCHEMA = {
 
 
 # ============================================================
+# Workflow Loop: 规划输出 Schema (test_loop.py 的 Phase 1 输出)
+# ============================================================
+
+_YOLO_CATEGORY_ITEM = {
+    "type": "object",
+    "required": ["class_name"],
+    "properties": {
+        "class_name":             {"type": "string", "minLength": 1},
+        "description":            {"type": "string"},
+        "expected_cdp_range":     {"type": "array", "minItems": 2, "maxItems": 2},
+        "expected_time_range_ms": {"type": "array", "minItems": 2, "maxItems": 2},
+        "confidence_threshold":   {"type": "number", "minimum": 0, "maximum": 1},
+        "max_detections":         {"type": "integer", "minimum": 1},
+    },
+}
+
+_TRADITIONAL_RULE_ITEM = {
+    "type": "object",
+    "required": ["class_name", "rule"],
+    "properties": {
+        "class_name":            {"type": "string", "minLength": 1},
+        "rule":                  {"type": "string", "minLength": 1},
+        "expected_depth_ranges": {"type": "array"},
+    },
+}
+
+WORKFLOW_PLAN_SCHEMA = {
+    "type": "object",
+    "required": ["scene_understanding", "workflow_steps"],
+    "properties": {
+        "scene_understanding": {"type": "string", "minLength": 1},
+        "workflow_steps": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+                "type": "object",
+                "required": ["step", "model", "instruction"],
+                "properties": {
+                    "step":        {"type": "integer", "minimum": 1},
+                    "model":       {"type": "string",
+                                    "enum": ["sam",
+                                             "traditional_code", "seismic_domain_model",
+                                             "attribute_extractor", "horizon_tracker",
+                                             "facies_classifier", "well_log_analyzer",
+                                             "seismic_foundation",
+                                             "cig_fault", "cig_channel",
+                                             "well_log_ml"]},
+                    "reason":      {"type": "string"},
+                    "image_name":  {"type": "string"},
+                    "instruction": {"type": "object"},
+                },
+                # 按 model 强制 instruction 必需字段
+                "allOf": [
+                    {"if": {"properties": {"model": {"const": "traditional_code"}}},
+                     "then": {"properties": {"instruction": {
+                         "type": "object",
+                         "required": ["rules"],
+                         "properties": {
+                             "rules": {"type": "array", "minItems": 1,
+                                       "items": _TRADITIONAL_RULE_ITEM},
+                         },
+                     }}}},
+                    {"if": {"properties": {"model": {"const": "sam"}}},
+                     "then": {"properties": {"instruction": {
+                         "type": "object",
+                         "required": ["prompt_type", "prompt_value", "label"],
+                     }}}},
+                    {"if": {"properties": {"model": {"const": "seismic_domain_model"}}},
+                     "then": {"properties": {"instruction": {
+                         "type": "object",
+                         "required": ["task"],
+                         "properties": {
+                             "task": {"type": "string",
+                                      "enum": ["fault_detection", "facies_classification",
+                                               "fracture"]},
+                             "attribute": {"type": "string",
+                                           "enum": ["coherence", "structure_tensor",
+                                                    "gradient", "variance", "both"]},
+                             "confidence_threshold": {"type": "number"},
+                             "min_region_area_pixels": {"type": "integer"},
+                             "regions_of_interest": {"type": "array"},
+                         },
+                     }}}},
+                    {"if": {"properties": {"model": {"const": "attribute_extractor"}}},
+                     "then": {"properties": {"instruction": {
+                         "type": "object",
+                         "required": ["attributes"],
+                         "properties": {
+                             "attributes": {"type": "array", "minItems": 1,
+                                            "items": {"type": "string"}},
+                             "regions_of_interest": {"type": "array"},
+                             "spectral_bands": {"type": "array"},
+                         },
+                     }}}},
+                    {"if": {"properties": {"model": {"const": "horizon_tracker"}}},
+                     "then": {"properties": {"instruction": {
+                         "type": "object",
+                         "required": ["seed_points", "tracking_mode"],
+                         "properties": {
+                             "seed_points": {"type": "array", "minItems": 1},
+                             "tracking_mode": {"type": "string",
+                                               "enum": ["peak", "trough", "correlation",
+                                                        "zero_crossing"]},
+                             "search_window_samples": {"type": "integer", "minimum": 1},
+                             "horizon_name": {"type": "string"},
+                         },
+                     }}}},
+                    {"if": {"properties": {"model": {"const": "facies_classifier"}}},
+                     "then": {"properties": {"instruction": {
+                         "type": "object",
+                         "required": ["n_clusters"],
+                         "properties": {
+                             "n_clusters": {"type": "integer", "minimum": 2, "maximum": 20},
+                             "attribute_list": {"type": "array",
+                                                "items": {"type": "string"}},
+                             "regions_of_interest": {"type": "array"},
+                             "method": {"type": "string",
+                                        "enum": ["kmeans", "gmm"]},
+                         },
+                     }}}},
+                    {"if": {"properties": {"model": {"const": "well_log_analyzer"}}},
+                     "then": {"properties": {"instruction": {
+                         "type": "object",
+                         "required": ["analysis_type"],
+                         "properties": {
+                             "analysis_type": {"type": "string",
+                                               "enum": ["curve_segmentation",
+                                                        "lithology_classification",
+                                                        "fluid_identification",
+                                                        "full_analysis"]},
+                             "rules": {"type": "array"},
+                             "depth_range": {"type": "object",
+                                             "properties": {
+                                                 "top_m": {"type": "number"},
+                                                 "bottom_m": {"type": "number"},
+                                             }},
+                         },
+                     }}}},
+                    {"if": {"properties": {"model": {"const": "seismic_foundation"}}},
+                     "then": {"properties": {"instruction": {
+                         "type": "object",
+                         "required": ["task"],
+                         "properties": {
+                             "task": {"type": "string",
+                                      "enum": ["facies_classification",
+                                               "feature_extraction"]},
+                             "regions_of_interest": {"type": "array"},
+                         },
+                     }}}},
+                    {"if": {"properties": {"model": {"const": "cig_fault"}}},
+                     "then": {"properties": {"instruction": {
+                         "type": "object",
+                         "properties": {
+                             "threshold": {"type": "number"},
+                             "scale": {"type": "number"},
+                         },
+                     }}}},
+                    {"if": {"properties": {"model": {"const": "cig_channel"}}},
+                     "then": {"properties": {"instruction": {
+                         "type": "object",
+                         "properties": {
+                             "threshold": {"type": "number"},
+                             "scales": {"type": "array"},
+                         },
+                     }}}},
+                    {"if": {"properties": {"model": {"const": "well_log_ml"}}},
+                     "then": {"properties": {"instruction": {
+                         "type": "object",
+                         "required": ["analysis_type"],
+                         "properties": {
+                             "analysis_type": {"type": "string",
+                                               "enum": ["lithology", "fluid",
+                                                        "full"]},
+                             "depth_range": {"type": "object"},
+                         },
+                     }}}},
+                ],
+            }
+        },
+        "dependencies":          {"type": "array"},
+        "verification_strategy": {"type": "string",
+                                  "enum": ["per_step", "batch", "none"]},
+        "max_iterations":        {"type": "integer", "minimum": 1, "maximum": 10},
+    }
+}
+
+
+# ============================================================
+# Workflow Loop: 验证输出 Schema (test_loop.py 的 Phase 3 输出)
+# ============================================================
+
+WORKFLOW_VERIFICATION_SCHEMA = {
+    "type": "object",
+    "required": ["verified", "need_retry"],
+    "properties": {
+        "verified": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["is_real"],
+                "properties": {
+                    "step":              {"type": "integer"},
+                    "model":             {"type": "string"},
+                    "result_id":         {"type": "string"},
+                    "is_real":           {"type": "boolean"},
+                    "confidence":        {"type": "number",
+                                          "minimum": 0.0, "maximum": 1.0},
+                    "geological_reason": {"type": "string"},
+                    "rejection_reason":  {"type": ["string", "null"]},
+                }
+            }
+        },
+        "false_positives":  {"type": "integer", "minimum": 0},
+        "missed_targets":   {"type": "array"},
+        "need_retry":       {"type": "boolean"},
+        "retry_instructions": {"type": ["object", "null"]},
+        "final_summary":    {"type": "string"},
+    }
+}
+
+
+# ============================================================
 # 校验工具
 # ============================================================
 
@@ -403,13 +625,17 @@ def validate_output(schema: dict, data: dict) -> tuple[bool, list[str]]:
         jsonschema.validate(data, schema)
         return True, []
     except jsonschema.ValidationError as e:
-        return False, [str(e)]
+        # e.message 短，比 str(e) 更适合作为反馈给 VLM 的错误信息
+        path = "/".join(str(p) for p in e.absolute_path) or "<root>"
+        return False, [f"{path}: {e.message}"]
 
 
 # 映射：agent_name → schema
 AGENT_SCHEMAS = {
-    "seismic_interp": SEISMIC_OUTPUT_SCHEMA,
-    "log_analysis": LOG_OUTPUT_SCHEMA,
-    "well_seismic_fusion": FUSION_OUTPUT_SCHEMA,
-    "prospect_evaluation": PROSPECT_OUTPUT_SCHEMA,
+    "seismic_interp":       SEISMIC_OUTPUT_SCHEMA,
+    "log_analysis":         LOG_OUTPUT_SCHEMA,
+    "well_seismic_fusion":  FUSION_OUTPUT_SCHEMA,
+    "prospect_evaluation":  PROSPECT_OUTPUT_SCHEMA,
+    "workflow_plan":        WORKFLOW_PLAN_SCHEMA,
+    "workflow_verification": WORKFLOW_VERIFICATION_SCHEMA,
 }

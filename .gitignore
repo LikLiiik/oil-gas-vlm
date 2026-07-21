@@ -13,6 +13,8 @@ build/
 *.pt
 *.ckpt
 /models/
+# Keep YOLO-World checkpoint for downstream model
+!weights/yolov8s-world.pt
 
 # Data
 *.segy

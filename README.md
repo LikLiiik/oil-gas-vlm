@@ -3,6 +3,34 @@
 基于本地部署 VLM (Qwen3-VL-8B) 串联下游专家模型（YOLO-World / SAM / 传统岩石物理代码），
 实现地震图像与测井曲线的多模态特征融合与有利目标识别。
 
+**赛题数据流**：`.sgy + .las + .csv` → **geo_adapter**（前置数据处理） → 标准 run 目录 → **本 pipeline**（VLM + YOLO + 验证回环） → JSON + 标注 PNG + 属性 SEG-Y。
+
+```
+[前置：多模态接口 / geo_adapter]                    [本 pipeline]
+raw SEG-Y   ┐                                       ┌──▶ 标注 PNG (bbox 叠原图)
+raw LAS      ├──▶ geo-adapter prepare               │
+well_loc.csv ┘        │                              ├──▶ 属性 3D SEG-Y (OpendTect/Petrel 可视化)
+                      ▼                              │
+              runs/<sample_id>/                     ├──▶ vlm_output.json (符合契约 schema)
+                assets/*.png                        │
+                prompts/*.txt        ────────────▶  ├──▶ vlm_output_refined.json (验证回环)
+                manifest.json                       │
+                schemas/expected_*.json             └──▶ report.json (总)
+```
+
+**两条命令跑通端到端**：
+
+```bash
+# 1) 前置：把原始数据处理成标准 run 包（用另一个 repo）
+cd /path/to/多模态接口 && geo-adapter prepare --config path/to/sample.yaml
+# → runs/<sample_id>/ 生成
+
+# 2) 本 pipeline：消费 run 包
+CUDA_VISIBLE_DEVICES=1 python -m pipeline \
+    --run-dir /path/to/多模态接口/runs/<sample_id> \
+    --output-dir out/
+```
+
 ## 技术路线
 
 ### 核心思路：VLM 做"大脑"，下游模型做"手"，结果回环验证
@@ -152,25 +180,37 @@ Qwen3-VL-8B 看文本，输出:
 ## 目录结构
 
 ```
-oil-gas-vlm/
-├── prompts/                              # Agent Prompt模板 + 设计文档
-│   ├── README.md                         # Prompt设计文档（架构详解）
-│   ├── seismic_interp_agent.md           # → YOLO-World + SAM
-│   ├── log_analysis_agent.md             # → 传统代码阈值
-│   ├── well_seismic_fusion_agent.md      # → 标定代码
-│   └── prospect_evaluation_agent.md      # → 决策模型
-├── schemas/
-│   └── output_schemas.py                 # JSON Schema + 校验函数
-├── pipeline/
-│   ├── data_processing.md                # 数据处理Pipeline详解
-│   ├── iteration_notes.md                # Prompt迭代记录
-│   └── accuracy_report.md                # 准确性评测报告
+oil-gas-llm/
+├── pipeline/                             # 生产逻辑（可 import 的 Python 包）
+│   ├── __init__.py                       # 公共 API: Pipeline, VLMClient, AgentResult...
+│   ├── __main__.py                       # CLI: python -m pipeline ...
+│   ├── vlm.py                            # VLMClient: 加载 Qwen3-VL + schema 校验重试
+│   ├── prompts.py                        # workflow_planning + verification + 4 agent prompt
+│   ├── agents.py                         # LoopAgent（闭环）+ SingleShotAgent + AgentResult
+│   ├── orchestrator.py                   # Pipeline: run_from_adapter (赛题主) + run_all + run_volume
+│   ├── adapter.py                        # RunPackage: 载入 geo_adapter 的 run 目录
+│   ├── tasks.py                          # 地质任务注册表 (fault/horizon/facies/fracture) + CLASS_ALIASES
+│   ├── exporter.py                       # AgentResult → PNG / JSON / 属性 SEG-Y
+│   ├── downstream/                       # 下游模型注册表
+│   │   ├── base.py                       # DownstreamModel Protocol + register/get
+│   │   ├── yolo_world.py                 # 真实 YOLO-World + mock fallback
+│   │   ├── sam.py                        # SAM (mock，可替换为 SAM-2)
+│   │   └── traditional_code.py           # 规则引擎，兼容多种 VLM 字段名
+│   ├── io/                               # SEG-Y I/O + 几何 + 渲染
+│   │   ├── segy.py                       # read_segy, write_attribute_segy, extract_*
+│   │   ├── geometry.py                   # SliceGeometry + pixel↔data 双向映射
+│   │   └── render.py                     # 数组切片 → PIL + geometry
+│   └── *.md                              # 迭代文档
+├── prompts/                              # Agent Prompt模板
+├── schemas/output_schemas.py             # 6 套 JSON Schema + validate_output
+├── weights/yolov8s-world.pt              # YOLO-World checkpoint（首次下载）
 ├── test/
-│   ├── test_live.py                      # 单次功能测试
-│   ├── test_accuracy.py                  # 准确性评测（ground truth对比）
-│   ├── test_batch.py                     # 批量统计测试 (N=5)
-│   └── test_two_stage.py                 # 两阶段策略验证
-├── .gitignore
+│   ├── data.py                           # 合成数据 fixture
+│   ├── test_pipeline_unit.py             # pipeline 内部单测（19 个）
+│   ├── test_io_unit.py                   # I/O + geometry + exporter 单测（12 个）
+│   ├── test_adapter_unit.py              # geo_adapter 对接单测（14 个）
+│   ├── test_loop.py                      # 端到端集成测试
+│   └── test_live.py / test_accuracy.py / test_batch.py / test_two_stage.py  # legacy
 └── README.md
 ```
 
@@ -182,44 +222,158 @@ oil-gas-vlm/
 
 ```bash
 conda activate qwen35grpo
-pip install matplotlib Pillow scipy segyio
+pip install matplotlib Pillow scipy segyio jsonschema ultralytics
 ```
 
-### 部署模型
+### 模型权重
 
 ```bash
+# Qwen3-VL 8B（主 VLM）
 export HF_ENDPOINT=https://hf-mirror.com
-huggingface-cli download Qwen/Qwen3-VL-8B-Instruct --local-dir /data/models/qwen3-vl-8b
+huggingface-cli download Qwen/Qwen3-VL-8B-Instruct \
+  --local-dir /data/models/qwen3-vl-8b
+
+# YOLO-World checkpoint
+mkdir -p weights && curl -L -o weights/yolov8s-world.pt \
+  https://github.com/ultralytics/assets/releases/download/v8.4.0/yolov8s-world.pt
 ```
 
-### 测试
+可选环境变量:
+- `QWEN_VL_PATH`：Qwen3-VL 权重路径
+- `YOLO_WORLD_PATH`：YOLO checkpoint 路径（默认 `weights/yolov8s-world.pt`）
+- `USE_MOCK_DOWNSTREAM=1`：强制所有下游模型走 mock（不加载 YOLO/SAM）
+
+---
+
+## 赛题工作流（推荐入口）
+
+### 步骤 1：用 geo_adapter 处理原始数据
+
+前置模块地址：`/home/newdisk/yxjiang/new_8T/oil-gas-llm/多模态接口/`
+
+它把 `.sgy/.segy/.npz` 地震 + `.las/.csv` 测井（+ 可选井位/轨迹/时深）转成标准 run 目录 `runs/<sample_id>/`。目录里已经准备好：
+- 归一化后的切片 PNG（`assets/seismic/{inline,crossline,slice,local_patch}_model.png`）
+- 测井曲线综合图（`assets/well_logs/well_log_panel.png`）
+- 定制好的 system/user prompt
+- 元数据 `manifest.json`（含 shape、CRS、view.source_indices、pixel_to_physical、alignment 等）
+- VLM 输出契约 `schemas/expected_model_output.schema.json`
 
 ```bash
-# 单个Agent功能测试
-CUDA_VISIBLE_DEVICES=1 python test/test_live.py
-
-# 准确性评测（含ground truth对比）
-CUDA_VISIBLE_DEVICES=1 python test/test_accuracy.py
-
-# 批量统计测试
-CUDA_VISIBLE_DEVICES=1 python test/test_batch.py
-
-# 两阶段策略验证（VLM粗分 + 代码精确）
-CUDA_VISIBLE_DEVICES=1 python test/test_two_stage.py
+cd /home/newdisk/yxjiang/new_8T/oil-gas-llm/多模态接口
+pip install -e '.[all]'    # 首次
+geo-adapter prepare --config examples/sample_config.yaml
 ```
 
-### VLM 推理参数
+### 步骤 2：本 pipeline 消费 run 目录
+
+```bash
+CUDA_VISIBLE_DEVICES=1 python -m pipeline \
+    --run-dir /home/newdisk/yxjiang/new_8T/oil-gas-llm/多模态接口/runs/demo_sample_001 \
+    --output-dir out/
+```
+
+pipeline 内部完成:
+1. 载入 run 包（prompt / 图像 / manifest / expected_schema）
+2. 首次 VLM 分析 → 输出符合 `expected_model_output.schema.json` 的 JSON（含 `downstream_plan`）
+3. YOLO-World 用 `downstream_plan.class_prompts` + `regions_of_interest[bbox_xyxy_norm]` 在指定图像上跑真实检测
+4. **默认**：把 YOLO 结果回喂 VLM 做一次验证回环（`--no-verify` 关闭）
+5. 用 `manifest.seismic.views[*].source_indices` 反推 3D 坐标，把归一化 bbox 聚合成属性体
+6. 每个 target_class 输出一个 `.sgy` 属性体 + 每张图一份标注 PNG
+
+输出目录：
+
+```
+out/
+├── report.json                       # 汇总（包）
+├── vlm_output.json                   # 首轮 VLM 输出（含 seismic/well_log/cross_modal_analysis, downstream_plan, uncertainty）
+├── vlm_output_refined.json           # 验证回环后的最终输出
+├── fault_plane_attribute.sgy         # 每个类别一个 3D 属性 SEG-Y
+├── channel_attribute.sgy
+├── reservoir_candidate_attribute.sgy
+├── fault_seismic_inline.png          # 每张有检测的图一份标注 PNG
+├── fault_seismic_crossline.png
+└── ...
+```
+
+### 步骤 3：编程接口
 
 ```python
-Qwen3VLForConditionalGeneration.from_pretrained(model_path, ...)
-model.generate(
-    max_new_tokens=4096,
-    do_sample=True,
-    temperature=0.3,
-    repetition_penalty=1.1,
-    top_p=0.95,
+from pipeline import Pipeline, load_run
+
+pkg = load_run("runs/demo_sample_001")
+print(pkg.to_summary())      # {sample_id, task_type, target_classes, n_images, ...}
+
+p = Pipeline()
+report = p.run_from_adapter(
+    run_dir="runs/demo_sample_001",
+    out_dir="out/",
+    verify=True,              # 默认开启 VLM 二次验证
+    yolo_conf=0.25,           # VLM 未指定时的置信度阈值
 )
 ```
+
+### 支持的地质任务类别
+
+`target_classes` 从 `manifest.task.target_classes` 读，由 geo_adapter 的 `input_config.yaml` 决定。本 pipeline 内置这些别名映射（`pipeline/tasks.py`）：
+
+| target_class | canonical | 内置地质描述 |
+|---|---|---|
+| `fault` / `断层` | fault | 同相轴垂直/倾斜错断、反射终止、断面波 |
+| `horizon` / `层位` | horizon | 横向连续强反射轴，地层界面/不整合面 |
+| `facies` / `沉积相` / `channel` / `reservoir_candidate` | facies | 反射构型（平行/S 形前积/杂乱/丘状/透镜/河道充填） |
+| `fracture` / `裂缝` | fracture | 高密度不连续反射带、相干性异常 |
+
+不在这张表里的类别，pipeline 会透传原始类别名给 VLM 和 YOLO（无中文提示）。要新增内置类别，在 `pipeline/tasks.py::TASKS` 里加一个 `GeologicalTask`，在 `CLASS_ALIASES` 里加别名。
+
+---
+
+## 其它入口（非赛题主流程）
+
+### Fallback：不经 geo_adapter 直读 SEG-Y
+
+如果 geo_adapter 前置没跑，可以让本 pipeline 自己读 SEG-Y 并切片。功能弱于 geo_adapter 流程（没有多视图、没有标定信息），仅用于调试。
+
+```bash
+python -m pipeline --input path/to/volume.sgy \
+    --tasks fault,horizon,facies,fracture \
+    --slice-axis inline --slice-stride 5 \
+    --output-dir out/
+```
+
+### 4-Agent 语义解释流水线
+
+跟赛题无关的独立能力：分别对地震剖面、测井曲线、井震融合图、勘探目标做**语义分析**，出 4 份 JSON 报告（无 SEG-Y 输出）。
+
+```bash
+python -m pipeline --agent all \
+    --seismic-image section.png --log-image log.png \
+    --output out.json
+```
+
+编程接口：`Pipeline().run_all(...)`。
+
+---
+
+## 测试
+
+```bash
+# 秒级单测（无需 VLM，共 45 个）
+python test/test_pipeline_unit.py        # 19: schema/registry/JSON 解析
+python test/test_io_unit.py              # 12: SEG-Y 读写/几何/exporter
+python test/test_adapter_unit.py         # 14: adapter/tasks/aggregate
+
+# 端到端集成
+CUDA_VISIBLE_DEVICES=1 python test/test_loop.py       # 合成数据（fallback 路径）
+CUDA_VISIBLE_DEVICES=1 python -m pipeline --run-dir /path/to/runs/demo_sample_001 \
+    --output-dir /tmp/adapter_smoke                    # 赛题主流程
+
+# 老评测脚本（未迁移，legacy）
+CUDA_VISIBLE_DEVICES=1 python test/test_accuracy.py
+```
+
+## VLM 推理参数
+
+Planning + Verification 阶段用 `temperature=0`（决定性输出）。自定义 agent 时可通过 `VLMClient.call_json(temperature=T)` 覆盖。
 
 ---
 
