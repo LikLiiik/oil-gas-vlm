@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# Model weights
+*.safetensors
+*.bin
+*.pth
+*.pt
+*.ckpt
+/models/
+
+# Data
+*.segy
+*.sgy
+*.las
+*.h5
+*.hdf5
+*.npy
+*.npz
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Claude
+.claude/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test outputs
+/tmp/
+*.log
+
+# Large PDF
+*.pdf

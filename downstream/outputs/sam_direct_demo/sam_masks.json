@@ -1,0 +1,109 @@
+{
+  "schema_version": "oil-gas.sam-segmentation.v1",
+  "backend": {
+    "name": "mock",
+    "model_path": null,
+    "device": "cpu"
+  },
+  "records": [
+    {
+      "sample_id": "demo_sam_001",
+      "image_path": "examples/demo_inline_120.png",
+      "image_size": {
+        "width": 1280,
+        "height": 720
+      },
+      "prompt_source": "direct_sam_prompts",
+      "prompts": [
+        {
+          "type": "bbox",
+          "label": "fault plane",
+          "bbox_xyxy": [
+            140,
+            160,
+            430,
+            610
+          ],
+          "point_xy": null,
+          "description": "断层候选框",
+          "source": "direct_sam_prompts",
+          "source_index": 0
+        },
+        {
+          "type": "point",
+          "label": "bright spot anomaly",
+          "bbox_xyxy": null,
+          "point_xy": [
+            950,
+            380
+          ],
+          "description": "亮点异常中心点",
+          "source": "direct_sam_prompts",
+          "source_index": 1
+        }
+      ],
+      "masks": [
+        {
+          "mask_id": "M1",
+          "label": "fault plane",
+          "score": 1.0,
+          "source_prompt_type": "bbox",
+          "polygon_xy": [
+            [
+              140,
+              160
+            ],
+            [
+              430,
+              160
+            ],
+            [
+              430,
+              610
+            ],
+            [
+              140,
+              610
+            ]
+          ],
+          "bbox_xyxy": [
+            140,
+            160,
+            430,
+            610
+          ],
+          "source": "mock_sam_mask"
+        },
+        {
+          "mask_id": "M2",
+          "label": "bright spot anomaly",
+          "score": 1.0,
+          "source_prompt_type": "point",
+          "polygon_xy": [
+            [
+              932,
+              362
+            ],
+            [
+              968,
+              362
+            ],
+            [
+              968,
+              398
+            ],
+            [
+              932,
+              398
+            ]
+          ],
+          "bbox_xyxy": null,
+          "source": "mock_sam_mask"
+        }
+      ],
+      "overlay_svg": "D:\\code\\oil-gas-vlm\\downstream\\outputs\\sam_direct_demo\\overlays\\demo_sam_001_sam_overlay.svg",
+      "warnings": []
+    }
+  ],
+  "warnings": []
+}

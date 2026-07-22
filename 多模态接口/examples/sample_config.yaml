@@ -1,0 +1,118 @@
+schema_version: "1.0"
+sample_id: "demo_sample_001"
+
+task:
+  type: "geological_target_detection"
+  target_classes: [fault, channel, reservoir_candidate]
+
+inputs:
+  seismic:
+    path: "examples/data/demo_seismic.npz"
+    format: auto
+    domain: auto
+    crs: "EPSG:32631"
+    optional: false
+  well_log:
+    path: "examples/data/demo_well.csv"
+    format: auto
+    well_id: "DEMO_WELL"
+    optional: false
+  well_location:
+    path: "examples/data/demo_well_location.csv"
+    optional: true
+  trajectory:
+    path: "examples/data/demo_trajectory.csv"
+    optional: true
+  time_depth:
+    path: null
+    optional: true
+
+field_mapping:
+  well_location:
+    well_id: [WELL, WELL_NAME, WELL_ID, 井名]
+    x: [X, EASTING, WELL_X, X坐标]
+    y: [Y, NORTHING, WELL_Y, Y坐标]
+    kb: [KB, KB_ELEV, 补心海拔]
+    ground_elevation: [GL, GROUND_ELEVATION, 地面海拔]
+    total_depth: [TD, TOTAL_DEPTH, 完钻井深]
+  trajectory:
+    well_id: [WELL, WELL_NAME, 井名]
+    md: [MD, MEASURED_DEPTH]
+    tvd: [TVD, TRUE_VERTICAL_DEPTH]
+    tvdss: [TVDSS]
+    inclination: [INC, INCLINATION, 井斜角]
+    azimuth: [AZI, AZIMUTH, 方位角]
+    x_offset: [DX, X_OFFSET, X偏移量]
+    y_offset: [DY, Y_OFFSET, Y偏移量]
+    x_absolute: [X, EASTING]
+    y_absolute: [Y, NORTHING]
+  time_depth:
+    depth: [DEPTH, TVDSS, TVD, MD, 深度]
+    twt_ms: [TWT_MS, TWT, TWO_WAY_TIME_MS, 双程时间]
+
+coordinate_system:
+  project_crs: "EPSG:32631"
+  seismic_crs: "EPSG:32631"
+  well_crs: "EPSG:32631"
+  allow_unknown_crs: true
+  require_explicit_crs_for_precise_alignment: true
+
+depth_reference:
+  well_log_axis: MD
+  unit: m
+  reference_surface: KB
+  positive_direction: down
+  vertical_datum: MSL
+  tvdss_sign_convention: positive_below_sea_level
+
+processing:
+  seismic:
+    views: [inline, crossline, slice, local_patch]
+    percentile_clip: {lower: 1.0, upper: 99.0}
+    normalization: symmetric
+    inline_index: 12
+    crossline_index: 14
+    sample_index: 48
+    local_patch_radius: 8
+  well_logs:
+    resample_step: null
+    short_gap_interpolation: {enabled: true, max_gap_samples: 3, method: linear}
+    preferred_curves:
+      RES_DEEP: ILD
+    curve_units:
+      GR: API
+      SP: mV
+      CALI: inch
+      ILD: ohm_m
+      LLD: ohm_m
+      ILM: ohm_m
+      MSFL: ohm_m
+      DTC: us/m
+      RHOB: g/cm3
+      NPHI: fraction
+    curve_descriptions:
+      ILD: deep induction resistivity
+      LLD: deep laterolog resistivity
+      ILM: medium induction resistivity
+      MSFL: micro spherical focused resistivity
+  time_depth:
+    preferred_sources: [checkshot, vsp, provided_table, sonic_integrated]
+    sonic_integration:
+      enabled: true
+      preferred_depth_axis: TVDSS
+      require_trajectory_for_deviated_well: true
+    t0: {policy: per_well, value_ms: null, source: null}
+    replacement_velocity: {policy: per_well, value_m_s: null, source: null}
+    calibration:
+      required_for_joint_analysis: true
+      method: manual_control_points
+      control_points_path: "examples/data/demo_control_points.csv"
+
+curve_aliases_path: "configs/curve_aliases.yaml"
+field_aliases_path: "configs/field_aliases.yaml"
+prompt_templates_path: "configs/prompt_templates.yaml"
+
+output:
+  directory: "runs/demo_sample_001"
+  overwrite: true
+

@@ -1,0 +1,13 @@
+{
+  "sample_id": "demo_direct_001",
+  "image_path": "examples/demo_inline_120.png",
+  "image_size": {
+    "width": 1280,
+    "height": 720
+  },
+  "classes": [
+    "fault plane",
+    "bright spot anomaly",
+    "channel"
+  ]
+}

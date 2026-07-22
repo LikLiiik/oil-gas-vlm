@@ -1,0 +1,20 @@
+schema_version: "1.0"
+
+GR:
+  aliases: [GR, GRD, GRC, SGR, GAMMA, GAMMA_RAY, GR_EDTC, 自然伽马, 伽马]
+SP:
+  aliases: [SP, SPR, SPR1, SPONTANEOUS_POTENTIAL, SELF_POTENTIAL, 自然电位]
+CAL:
+  aliases: [CAL, CALI, CALD, HCAL, CALIPER, BOREHOLE_DIAMETER, 井径]
+RES_DEEP:
+  aliases: [RES_DEEP, RDEP, RT, RD, ILD, LLD, AT90, HDRS, 深电阻率, 深感应, 深侧向]
+RES_MEDIUM_SHALLOW:
+  aliases: [RES_MEDIUM_SHALLOW, RMED, RSHAL, RS, ILM, LLS, LL8, SN, AT30, AT20, 中电阻率, 浅电阻率, 中感应, 浅侧向]
+RES_MICRO:
+  aliases: [RES_MICRO, MSFL, SFL, SFLU, MLL, RXO, MCFL, 微电阻率, 微球形聚焦]
+AC:
+  aliases: [AC, DT, DTC, DTCO, SONIC, ACOUSTIC_SLOWNESS, 声波时差]
+DEN:
+  aliases: [DEN, RHOB, RHOZ, ZDEN, BULK_DENSITY, 密度, 体积密度]
+CNL:
+  aliases: [CNL, CNC, NPHI, TNPH, NEUTRON, NEUTRON_POROSITY, 中子, 中子孔隙度]

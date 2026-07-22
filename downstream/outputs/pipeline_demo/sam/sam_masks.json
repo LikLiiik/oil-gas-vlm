@@ -1,0 +1,202 @@
+{
+  "schema_version": "oil-gas.sam-segmentation.v1",
+  "backend": {
+    "name": "mock",
+    "model_path": null,
+    "device": "cpu"
+  },
+  "records": [
+    {
+      "sample_id": "demo_inline_120",
+      "image_path": "examples/demo_inline_120.png",
+      "image_size": {
+        "width": 1280,
+        "height": 720
+      },
+      "prompt_source": "yolo_detections",
+      "prompts": [
+        {
+          "type": "bbox",
+          "label": "bright spot anomaly",
+          "bbox_xyxy": [
+            994,
+            418,
+            1198,
+            457
+          ],
+          "source": "yolo_detection",
+          "source_score": 0.9341,
+          "source_index": 0
+        },
+        {
+          "type": "bbox",
+          "label": "fault plane",
+          "bbox_xyxy": [
+            237,
+            319,
+            327,
+            551
+          ],
+          "source": "yolo_detection",
+          "source_score": 0.8986,
+          "source_index": 1
+        },
+        {
+          "type": "bbox",
+          "label": "channel",
+          "bbox_xyxy": [
+            151,
+            603,
+            241,
+            655
+          ],
+          "source": "yolo_detection",
+          "source_score": 0.8167,
+          "source_index": 2
+        },
+        {
+          "type": "bbox",
+          "label": "fault plane",
+          "bbox_xyxy": [
+            171,
+            187,
+            283,
+            340
+          ],
+          "source": "yolo_detection",
+          "source_score": 0.7196,
+          "source_index": 3
+        }
+      ],
+      "masks": [
+        {
+          "mask_id": "M1",
+          "label": "bright spot anomaly",
+          "score": 1.0,
+          "source_prompt_type": "bbox",
+          "polygon_xy": [
+            [
+              994,
+              418
+            ],
+            [
+              1198,
+              418
+            ],
+            [
+              1198,
+              457
+            ],
+            [
+              994,
+              457
+            ]
+          ],
+          "bbox_xyxy": [
+            994,
+            418,
+            1198,
+            457
+          ],
+          "source": "mock_sam_mask"
+        },
+        {
+          "mask_id": "M2",
+          "label": "fault plane",
+          "score": 1.0,
+          "source_prompt_type": "bbox",
+          "polygon_xy": [
+            [
+              237,
+              319
+            ],
+            [
+              327,
+              319
+            ],
+            [
+              327,
+              551
+            ],
+            [
+              237,
+              551
+            ]
+          ],
+          "bbox_xyxy": [
+            237,
+            319,
+            327,
+            551
+          ],
+          "source": "mock_sam_mask"
+        },
+        {
+          "mask_id": "M3",
+          "label": "channel",
+          "score": 1.0,
+          "source_prompt_type": "bbox",
+          "polygon_xy": [
+            [
+              151,
+              603
+            ],
+            [
+              241,
+              603
+            ],
+            [
+              241,
+              655
+            ],
+            [
+              151,
+              655
+            ]
+          ],
+          "bbox_xyxy": [
+            151,
+            603,
+            241,
+            655
+          ],
+          "source": "mock_sam_mask"
+        },
+        {
+          "mask_id": "M4",
+          "label": "fault plane",
+          "score": 1.0,
+          "source_prompt_type": "bbox",
+          "polygon_xy": [
+            [
+              171,
+              187
+            ],
+            [
+              283,
+              187
+            ],
+            [
+              283,
+              340
+            ],
+            [
+              171,
+              340
+            ]
+          ],
+          "bbox_xyxy": [
+            171,
+            187,
+            283,
+            340
+          ],
+          "source": "mock_sam_mask"
+        }
+      ],
+      "overlay_svg": "D:\\code\\oil-gas-vlm\\downstream\\outputs\\pipeline_demo\\sam\\overlays\\demo_inline_120_sam_overlay.svg",
+      "warnings": []
+    }
+  ],
+  "warnings": []
+}

@@ -1,0 +1,53 @@
+{
+  "sample_id": "demo_inline_120",
+  "image_path": "examples/demo_inline_120.png",
+  "image_size": {
+    "width": 1280,
+    "height": 720
+  },
+  "coordinate_system": {
+    "x_axis": "cdp",
+    "x_range": [40, 220],
+    "y_axis": "time_ms",
+    "y_range": [500, 1800],
+    "y_direction": "top_to_bottom"
+  },
+  "downstream_prompts": {
+    "yolo_world": {
+      "task": "open_vocabulary_detection",
+      "categories": [
+        {
+          "class_name": "fault plane",
+          "description": "同相轴垂直错断、反射终止、断面波的位置",
+          "expected_cdp_range": [60, 100],
+          "expected_time_range_ms": [800, 1600],
+          "confidence_threshold": 0.3,
+          "max_detections": 5
+        },
+        {
+          "class_name": "bright spot anomaly",
+          "description": "局部强负振幅异常，可能对应含气亮点",
+          "expected_cdp_range": [160, 220],
+          "expected_time_range_ms": [1100, 1400],
+          "confidence_threshold": 0.5,
+          "max_detections": 3
+        },
+        {
+          "class_name": "channel",
+          "description": "透镜状或丘状反射构型，内部反射杂乱或空白",
+          "expected_cdp_range": [40, 90],
+          "expected_time_range_ms": [1400, 1700],
+          "confidence_threshold": 0.3,
+          "max_detections": 3
+        }
+      ],
+      "image_preprocessing": {
+        "color_map": "seismic",
+        "normalize": "clip_98_percentile"
+      }
+    }
+  },
+  "analysis": {
+    "summary": "该剖面存在疑似断层、亮点异常和河道状特殊地质体候选。"
+  }
+}

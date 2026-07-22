@@ -1,0 +1,39 @@
+{
+  "schema_version": "oil-gas.downstream-pipeline.v1",
+  "outputs": {
+    "yolo_detections": "D:\\code\\oil-gas-vlm\\downstream\\outputs\\pipeline_demo\\yolo\\yolo_world_detections.json",
+    "sam_masks": "D:\\code\\oil-gas-vlm\\downstream\\outputs\\pipeline_demo\\sam\\sam_masks.json"
+  },
+  "counts": {
+    "samples": 1,
+    "detections": 4,
+    "masks": 4
+  },
+  "backends": {
+    "yolo": {
+      "name": "mock",
+      "model_path": null,
+      "device": "cpu",
+      "imgsz": 640
+    },
+    "sam": {
+      "name": "mock",
+      "model_path": null,
+      "device": "cpu"
+    }
+  },
+  "validation": {
+    "yolo": {
+      "ok": true,
+      "errors": []
+    },
+    "sam": {
+      "ok": true,
+      "errors": []
+    }
+  },
+  "warnings": {
+    "yolo": [],
+    "sam": []
+  }
+}

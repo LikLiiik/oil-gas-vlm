@@ -1,0 +1,156 @@
+{
+  "schema_version": "oil-gas.yolo-world-detection.v1",
+  "backend": {
+    "name": "mock",
+    "model_path": null,
+    "device": "cpu",
+    "imgsz": 640
+  },
+  "records": [
+    {
+      "sample_id": "demo_inline_120",
+      "image_path": "examples/demo_inline_120.png",
+      "image_size": {
+        "width": 1280,
+        "height": 720
+      },
+      "prompt_source": "vlm_downstream_prompts",
+      "coordinate_system": {
+        "x_axis": "cdp",
+        "x_range": [
+          40,
+          220
+        ],
+        "y_axis": "time_ms",
+        "y_range": [
+          500,
+          1800
+        ],
+        "y_direction": "top_to_bottom"
+      },
+      "class_prompts": [
+        {
+          "class_name": "fault plane",
+          "description": "同相轴垂直错断、反射终止、断面波的位置",
+          "text_prompt": "fault plane",
+          "confidence_threshold": 0.3,
+          "max_detections": 5,
+          "expected_cdp_range": [
+            60.0,
+            100.0
+          ],
+          "expected_time_range_ms": [
+            800.0,
+            1600.0
+          ],
+          "source_index": 0
+        },
+        {
+          "class_name": "bright spot anomaly",
+          "description": "局部强负振幅异常，可能对应含气亮点",
+          "text_prompt": "bright spot anomaly",
+          "confidence_threshold": 0.5,
+          "max_detections": 3,
+          "expected_cdp_range": [
+            160.0,
+            220.0
+          ],
+          "expected_time_range_ms": [
+            1100.0,
+            1400.0
+          ],
+          "source_index": 1
+        },
+        {
+          "class_name": "channel",
+          "description": "透镜状或丘状反射构型，内部反射杂乱或空白",
+          "text_prompt": "channel",
+          "confidence_threshold": 0.3,
+          "max_detections": 3,
+          "expected_cdp_range": [
+            40.0,
+            90.0
+          ],
+          "expected_time_range_ms": [
+            1400.0,
+            1700.0
+          ],
+          "source_index": 2
+        }
+      ],
+      "detections": [
+        {
+          "class_name": "bright spot anomaly",
+          "score": 0.9341,
+          "bbox_xyxy": [
+            994,
+            418,
+            1198,
+            457
+          ],
+          "class_index": 1,
+          "roi_xyxy": [
+            853,
+            332,
+            1279,
+            498
+          ]
+        },
+        {
+          "class_name": "fault plane",
+          "score": 0.8986,
+          "bbox_xyxy": [
+            237,
+            319,
+            327,
+            551
+          ],
+          "class_index": 0,
+          "roi_xyxy": [
+            142,
+            166,
+            426,
+            608
+          ]
+        },
+        {
+          "class_name": "channel",
+          "score": 0.8167,
+          "bbox_xyxy": [
+            151,
+            603,
+            241,
+            655
+          ],
+          "class_index": 2,
+          "roi_xyxy": [
+            0,
+            498,
+            355,
+            664
+          ]
+        },
+        {
+          "class_name": "fault plane",
+          "score": 0.7196,
+          "bbox_xyxy": [
+            171,
+            187,
+            283,
+            340
+          ],
+          "class_index": 0,
+          "roi_xyxy": [
+            142,
+            166,
+            426,
+            608
+          ]
+        }
+      ],
+      "overlay_svg": "D:\\code\\oil-gas-vlm\\downstream\\outputs\\yolo_demo_debug_patch\\overlays\\demo_inline_120_overlay.svg",
+      "warnings": []
+    }
+  ],
+  "warnings": []
+}

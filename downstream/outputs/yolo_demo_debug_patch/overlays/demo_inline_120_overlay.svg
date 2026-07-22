@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+<defs>
+<pattern id="bg" patternUnits="userSpaceOnUse" width="40" height="18">
+<rect width="40" height="18" fill="#20242a"/>
+<path d="M0 9 C10 0 30 18 40 9" stroke="#8fa7b5" stroke-width="1.2" fill="none" opacity="0.75"/>
+</pattern>
+</defs>
+<rect width="1280" height="720" fill="url(#bg)"/>
+<text x="12" y="24" fill="#ffffff" font-size="16" font-family="Arial">demo_inline_120</text>
+<text x="12" y="44" fill="#d6e4ff" font-size="12" font-family="Arial">classes: fault plane, bright spot anomaly, channel</text>
+<rect x="994" y="418" width="204" height="39" fill="#ffcc0033" stroke="#ffcc00" stroke-width="3"/>
+<text x="994" y="412" fill="#ffec99" font-size="13" font-family="Arial">bright spot anomaly 0.9341</text>
+<rect x="237" y="319" width="90" height="232" fill="#ffcc0033" stroke="#ffcc00" stroke-width="3"/>
+<text x="237" y="313" fill="#ffec99" font-size="13" font-family="Arial">fault plane 0.8986</text>
+<rect x="151" y="603" width="90" height="52" fill="#ffcc0033" stroke="#ffcc00" stroke-width="3"/>
+<text x="151" y="597" fill="#ffec99" font-size="13" font-family="Arial">channel 0.8167</text>
+<rect x="171" y="187" width="112" height="153" fill="#ffcc0033" stroke="#ffcc00" stroke-width="3"/>
+<text x="171" y="181" fill="#ffec99" font-size="13" font-family="Arial">fault plane 0.7196</text>
+</svg>

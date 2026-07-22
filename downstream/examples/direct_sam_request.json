@@ -1,0 +1,22 @@
+{
+  "sample_id": "demo_sam_001",
+  "image_path": "examples/demo_inline_120.png",
+  "image_size": {
+    "width": 1280,
+    "height": 720
+  },
+  "sam_prompts": [
+    {
+      "type": "bbox",
+      "label": "fault plane",
+      "bbox_xyxy": [140, 160, 430, 610],
+      "description": "断层候选框"
+    },
+    {
+      "type": "point",
+      "label": "bright spot anomaly",
+      "point_xy": [950, 380],
+      "description": "亮点异常中心点"
+    }
+  ]
+}
