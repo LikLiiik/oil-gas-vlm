@@ -13,6 +13,7 @@
 
 # VLM API
 openai>=1.40.0
+httpx[socks]>=0.27.0
 python-dotenv>=1.0.0
 
 # 基础科学计算（API 模式仍需要 SEG-Y 读写、几何计算）

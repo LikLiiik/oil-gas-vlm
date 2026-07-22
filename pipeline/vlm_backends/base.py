@@ -48,7 +48,7 @@ class VLMBackend(ABC):
         return None
 
     # 让 backend 支持上下文管理器。
-    def __enter__(self) -> "VLMBackend":
+    def __enter__(self) -> VLMBackend:
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:

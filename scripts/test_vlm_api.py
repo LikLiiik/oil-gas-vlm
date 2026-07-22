@@ -25,7 +25,6 @@ import argparse
 import json
 import os
 import sys
-import tempfile
 from pathlib import Path
 
 # 让 `python scripts/test_vlm_api.py` 直接运行也能找到 pipeline 包
@@ -69,7 +68,7 @@ def _build_argparser() -> argparse.ArgumentParser:
 def _warn_cost(model: str, n_images: int) -> None:
     print()
     print("=" * 60)
-    print("  ⚠️  本次调用会产生 API 费用")
+    print("  WARNING: 本次调用会产生 API 费用")
     print(f"  model={model}  images={n_images}")
     print("  中断组合键 Ctrl+C")
     print("=" * 60)
@@ -78,8 +77,8 @@ def _warn_cost(model: str, n_images: int) -> None:
 
 def _collect_images(run_dir: str | None, max_images: int) -> list:
     """从 run_dir 收集最多 max_images 张 PIL Image；没有就合成 1 张。"""
-    from PIL import Image
     import numpy as np
+    from PIL import Image
 
     if run_dir:
         run_dir = Path(run_dir)

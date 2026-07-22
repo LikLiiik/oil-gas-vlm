@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -12,13 +13,21 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import json
 
 import numpy as np
+import pytest
 
 from pipeline import load_run
 from pipeline.adapter import PackageImage, RunPackage, build_vlm_user_text
 from pipeline.exporter import aggregate_adapter_detections
 from pipeline.tasks import CLASS_ALIASES, hint_for_target_classes
 
-DEMO_RUN = Path("/home/newdisk/yxjiang/new_8T/oil-gas-llm/多模态接口/runs/demo_sample_001")
+DEMO_RUN = Path(os.environ.get(
+    "OIL_GAS_DEMO_RUN",
+    Path(__file__).resolve().parent.parent / "多模态接口" / "runs" / "demo_sample_001",
+))
+pytestmark = pytest.mark.skipif(
+    not DEMO_RUN.is_dir(),
+    reason=f"demo run dir 不存在: {DEMO_RUN}",
+)
 
 
 def _skip_if_no_demo():

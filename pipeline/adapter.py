@@ -59,8 +59,18 @@ class RunPackage:
 
     def view_meta(self, view_name: str) -> dict | None:
         """从 manifest 里取某个地震 view 的元数据（inline/crossline/slice/local_patch）。"""
-        return (self.manifest.get("seismic", {}) or {}) \
-                   .get("views", {}).get(view_name)
+        views = (self.manifest.get("seismic", {}) or {}).get("views", {})
+        direct = views.get(view_name)
+        if direct is not None:
+            return direct
+        return next(
+            (
+                meta
+                for meta in views.values()
+                if isinstance(meta, dict) and meta.get("physical_view") == view_name
+            ),
+            None,
+        )
 
     def to_summary(self) -> dict:
         return {
@@ -230,17 +240,26 @@ def _slim_manifest(m: dict) -> dict:
         } for vn, v in (seismic.get("views") or {}).items()},
     }
     wl = m.get("well_logs") or {}
-    curves = wl.get("curves") or {}
+    curves = wl.get("curves") or wl.get("curves_present") or {}
     if isinstance(curves, dict):
         curve_iter = curves.values()
     elif isinstance(curves, list):
         curve_iter = curves
     else:
         curve_iter = []
+    present = []
+    for curve in curve_iter:
+        if isinstance(curve, str):
+            present.append(curve)
+            continue
+        if not isinstance(curve, dict):
+            continue
+        name = curve.get("canonical_name")
+        if name and curve.get("available", True):
+            present.append(name)
     out["well_logs"] = {
         "available": wl.get("available"),
-        "curves_present": [c.get("canonical_name") for c in curve_iter
-                           if isinstance(c, dict) and c.get("available")],
+        "curves_present": present,
         "depth_range": wl.get("depth_range"),
     }
     td = m.get("time_depth_relation") or {}

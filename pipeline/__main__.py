@@ -117,7 +117,8 @@ def _cmd_agents(args) -> int:
             print("--agent prospect 需要前置产物，请用 --agent all", file=sys.stderr)
             return 2
         else:
-            print(f"unknown agent {args.agent}", file=sys.stderr); return 2
+            print(f"unknown agent {args.agent}", file=sys.stderr)
+            return 2
         payload = r.to_dict()
 
     Path(args.output).write_text(
@@ -135,11 +136,11 @@ def _apply_vlm_cli_overrides(args) -> None:
     安全规则：**绝不**接收 API key，避免进 shell 历史 / 进程列表。
     """
     import os
+    from pathlib import Path
 
     # 1) 先尝试从 .env 加载（不覆盖已有 env）
     try:
         from dotenv import load_dotenv  # type: ignore
-        from pathlib import Path
         env_path = Path(__file__).resolve().parent.parent / ".env"
         if env_path.is_file():
             load_dotenv(env_path, override=False)

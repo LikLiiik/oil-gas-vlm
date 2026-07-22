@@ -34,6 +34,7 @@ import argparse
 import json
 import os
 import sys
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -90,6 +91,7 @@ class BackendResult:
     error: str | None = None
     report: dict = field(default_factory=dict)
     elapsed_vlm_s: float = 0.0
+    elapsed_total_s: float = 0.0
     n_vlm_calls: int = 0
 
 
@@ -105,6 +107,7 @@ def _run_one(backend_name: str, run_dir: str, out_dir: Path,
         vlm = builder()
     except Exception as e:
         return BackendResult(name=backend_name, ran=False, error=f"init: {e}")
+    started = time.perf_counter()
     try:
         p = Pipeline(vlm=vlm, verbose=False)
         report = p.run_from_adapter(
@@ -114,20 +117,23 @@ def _run_one(backend_name: str, run_dir: str, out_dir: Path,
             max_iterations=max_iter,
         )
     except Exception as e:
-        return BackendResult(name=backend_name, ran=False,
-                             error=f"pipeline: {type(e).__name__}: {e}")
-    # 累加 VLM 调用耗时（从 verifications 拿；plan 的 elapsed 在 meta 里）
-    vlm_total = 0.0
-    n_calls = 0
-    plan_resp = (report.get("vlm_plan") or {})
-    # 顶层 elapsed 没显式给出；用 verifications 的 elapsed_s 求和（plan 一次 + verify 多次）
-    for v in (report.get("verifications") or []):
-        ver = v.get("verification") or {}
-        # 没记 elapsed，回退用 report.iterations 粗估
-    n_calls = 1 + len(report.get("verifications") or [])
+        return BackendResult(
+            name=backend_name,
+            ran=False,
+            error=f"pipeline: {type(e).__name__}: {e}",
+            elapsed_vlm_s=float(getattr(vlm, "elapsed_total_s", 0.0)),
+            elapsed_total_s=time.perf_counter() - started,
+            n_vlm_calls=int(getattr(vlm, "call_count", 0)),
+        )
+    finally:
+        close = getattr(vlm, "close", None)
+        if callable(close):
+            close()
     return BackendResult(
         name=backend_name, ran=True, report=report,
-        n_vlm_calls=n_calls, elapsed_vlm_s=vlm_total,
+        n_vlm_calls=int(getattr(vlm, "call_count", 0)),
+        elapsed_vlm_s=float(getattr(vlm, "elapsed_total_s", 0.0)),
+        elapsed_total_s=time.perf_counter() - started,
     )
 
 
@@ -149,9 +155,15 @@ def _plan_signature(plan: dict) -> dict:
     return sig
 
 
-def _compare(local: BackendResult, api: BackendResult) -> dict:
+def _compare(
+    local: BackendResult | None,
+    api: BackendResult | None,
+) -> dict:
+    local = local or BackendResult(name="local", ran=False, error="not requested")
+    api = api or BackendResult(name="api", ran=False, error="not requested")
     diff: dict[str, Any] = {
         "both_ran": local.ran and api.ran,
+        "ran": {"local": local.ran, "api": api.ran},
         "ok": {
             "local": (local.report.get("ok") if local.ran else None),
             "api":   (api.report.get("ok") if api.ran else None),
@@ -163,6 +175,14 @@ def _compare(local: BackendResult, api: BackendResult) -> dict:
         "vlm_calls": {
             "local": local.n_vlm_calls,
             "api":   api.n_vlm_calls,
+        },
+        "elapsed_vlm_s": {
+            "local": round(local.elapsed_vlm_s, 3) if local.ran else None,
+            "api": round(api.elapsed_vlm_s, 3) if api.ran else None,
+        },
+        "elapsed_total_s": {
+            "local": round(local.elapsed_total_s, 3) if local.ran else None,
+            "api": round(api.elapsed_total_s, 3) if api.ran else None,
         },
         "verifications": {
             "local": len(local.report.get("verifications") or []),
@@ -231,6 +251,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.run_both:
         args.run_local = args.run_api = True
 
+    if (args.run_local or args.run_api) and not Path(args.run_dir).is_dir():
+        print(f"ERROR: --run-dir {args.run_dir} 不存在", file=sys.stderr)
+        return 2
+
     results: dict[str, BackendResult] = {}
     if args.run_local:
         results["local"] = _run_one("local", args.run_dir, out_dir,
@@ -244,7 +268,6 @@ def main(argv: list[str] | None = None) -> int:
         print("       （说明：规划差异需要真实 VLM 跑一次才能拿到——请加 --run-both）")
         # 只检查下游模型清单差异（不需要 VLM）
         try:
-            from pipeline import Pipeline
             from pipeline import downstream as ds
             print(f"[A/B] 下游模型清单（与 VLM 无关）: {ds.available_names()}")
         except Exception as e:
@@ -258,11 +281,6 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0
 
-    # 真要跑：先验证 run_dir
-    if not Path(args.run_dir).is_dir():
-        print(f"ERROR: --run-dir {args.run_dir} 不存在", file=sys.stderr)
-        return 2
-
     diff = _compare(results.get("local"), results.get("api"))
     out = {
         "ran_backends": list(results.keys()),
@@ -271,6 +289,8 @@ def main(argv: list[str] | None = None) -> int:
             k: {
                 "ran": v.ran, "error": v.error, "report": v.report,
                 "n_vlm_calls": v.n_vlm_calls,
+                "elapsed_vlm_s": round(v.elapsed_vlm_s, 3),
+                "elapsed_total_s": round(v.elapsed_total_s, 3),
             } for k, v in results.items()
         },
     }
@@ -285,7 +305,8 @@ def main(argv: list[str] | None = None) -> int:
             r = v.report
             print(f"  - {k}: ok={r.get('ok')} "
                   f"n_detections={(r.get('downstream') or {}).get('n_detections')} "
-                  f"iterations={len(r.get('verifications') or [])}")
+                  f"iterations={len(r.get('verifications') or [])} "
+                  f"vlm={v.elapsed_vlm_s:.1f}s total={v.elapsed_total_s:.1f}s")
         else:
             print(f"  - {k}: NOT RAN ({v.error})")
     if diff.get("plan"):
@@ -293,7 +314,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  plan: models_match={dp['models_match']} "
               f"n_steps_match={dp['n_steps_match']} "
               f"scene_match={dp['scene_match']}")
-    return 0 if (diff["ok"]["local"] and diff["ok"]["api"]) else 1
+    return 0 if all(v.ran and v.report.get("ok") for v in results.values()) else 1
 
 
 if __name__ == "__main__":

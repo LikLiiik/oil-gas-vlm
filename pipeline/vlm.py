@@ -210,6 +210,8 @@ class VLMClient:
             dtype=dtype,
             device_map=device_map,
         )
+        self.call_count = 0
+        self.elapsed_total_s = 0.0
 
     # ---- 透明代理 -------------------------------------------------------
 
@@ -226,10 +228,13 @@ class VLMClient:
         temperature: float = 0.0,
     ) -> tuple[str, float]:
         """底层调用，返回 (raw_text, elapsed_s)。"""
-        return self._impl.call(
+        result = self._impl.call(
             system_prompt, images, user_text,
             max_new_tokens=max_new_tokens, temperature=temperature,
         )
+        self.call_count += 1
+        self.elapsed_total_s += result[1]
+        return result
 
     def call_json(
         self,
@@ -241,18 +246,21 @@ class VLMClient:
         temperature: float = 0.0,
     ) -> VLMResponse:
         """调用 VLM 期望 JSON 输出。带 schema 时校验失败会用错误信息作反馈重试一次。"""
-        return _call_json_with_backend(
+        response = _call_json_with_backend(
             self._impl,
             system_prompt=system_prompt, images=images, user_text=user_text,
             schema=schema, max_new_tokens=max_new_tokens, temperature=temperature,
         )
+        self.call_count += response.attempts
+        self.elapsed_total_s += response.elapsed_s
+        return response
 
     # ---- 上下文管理 ------------------------------------------------------
 
     def close(self) -> None:
         self._impl.close()
 
-    def __enter__(self) -> "VLMClient":
+    def __enter__(self) -> VLMClient:
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:

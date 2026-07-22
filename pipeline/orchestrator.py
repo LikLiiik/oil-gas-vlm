@@ -137,7 +137,7 @@ class Pipeline:
             summary_report(report, out_dir)
             return report
 
-        plan = plan_resp.data
+        plan = self._normalize_competition_plan(plan_resp.data, pkg)
         steps = plan.get("workflow_steps", [])
         (out_dir / "vlm_plan.json").write_text(
             json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8",
@@ -263,19 +263,86 @@ class Pipeline:
 
     # ── 竞赛流程辅助方法 ────────────────────────────────────────────────
 
+    @staticmethod
+    def _normalize_competition_plan(plan: dict, pkg) -> dict:
+        """用 manifest 的权威范围修正会导致下游空跑的深度参数。"""
+        wl = pkg.manifest.get("well_logs") or {}
+        depth_range = wl.get("depth_range")
+        if isinstance(depth_range, dict):
+            known_top = depth_range.get("top_m", depth_range.get("top"))
+            known_bottom = depth_range.get("bottom_m", depth_range.get("bottom"))
+        elif isinstance(depth_range, (list, tuple)) and len(depth_range) >= 2:
+            known_top, known_bottom = depth_range[:2]
+        else:
+            known_top = known_bottom = None
+
+        try:
+            known_top = float(known_top)
+            known_bottom = float(known_bottom)
+        except (TypeError, ValueError):
+            return plan
+
+        adjustments: list[str] = []
+        for step in plan.get("workflow_steps") or []:
+            if step.get("model") not in {"well_log_analyzer", "well_log_ml"}:
+                continue
+            instruction = step.get("instruction") or {}
+            requested = instruction.get("depth_range")
+            if not isinstance(requested, dict):
+                continue
+            try:
+                top = float(requested.get("top_m"))
+                bottom = float(requested.get("bottom_m"))
+            except (TypeError, ValueError):
+                top, bottom = known_top, known_bottom
+            if bottom < known_top or top > known_bottom or top >= bottom:
+                top, bottom = known_top, known_bottom
+            else:
+                top = max(top, known_top)
+                bottom = min(bottom, known_bottom)
+            normalized = {"top_m": top, "bottom_m": bottom}
+            if normalized != requested:
+                instruction["depth_range"] = normalized
+                step["instruction"] = instruction
+                adjustments.append(
+                    f"step {step.get('step')}: depth_range normalized to "
+                    f"[{top}, {bottom}] from manifest"
+                )
+        if adjustments:
+            plan["plan_adjustments"] = adjustments
+        return plan
+
     def _build_competition_plan_text(self, pkg, task_hint: str,
                                      image_by_name: dict) -> str:
         """构建给 VLM 的竞赛规划 user text。
         包含: 任务描述 + 图像清单 + 推荐模型 + 约束说明。
         """
         from . import downstream
+        from .adapter import _slim_manifest
+
         img_lines = []
         for i, im in enumerate(pkg.images, 1):
             view = im.physical_view
+            vm = pkg.view_meta(view) or {}
+            shape = vm.get("array_shape")
+            seed_bounds = ""
+            if (
+                isinstance(shape, (list, tuple))
+                and len(shape) == 2
+                and view in {"inline", "crossline", "user_provided_2d_patch"}
+            ):
+                seed_bounds = (
+                    f"  horizon_seed_bounds=trace_idx[0,{int(shape[0]) - 1}],"
+                    f"sample_idx[0,{int(shape[1]) - 1}]"
+                )
             img_lines.append(
                 f"  {i}. image_name=\"{im.name}\"  view={view}  "
-                f"size={im.pil.size}"
+                f"size_px={im.pil.size}  array_shape={shape}"
+                f"{seed_bounds}"
             )
+        manifest_context = json.dumps(
+            _slim_manifest(pkg.manifest), ensure_ascii=False, indent=2,
+        )
         plan_text = (
             f"你是地球物理AI工作流规划器。以下是 geo_adapter 预处理好的 "
             f"赛题数据，共 {len(pkg.images)} 张图像。\n\n"
@@ -285,6 +352,8 @@ class Pipeline:
             f"{task_hint}\n\n"
             f"=== 可用图像 (用 image_name 指定在哪个图上跑) ===\n"
             + "\n".join(img_lines) + "\n\n"
+            f"=== manifest 权威上下文（不得臆造缺失曲线、坐标或范围）===\n"
+            f"{manifest_context}\n\n"
             f"=== 可用下游模型 ===\n"
             f"{downstream.available_models_desc()}\n\n"
             f"=== 任务→模型推荐 ===\n"
@@ -297,6 +366,10 @@ class Pipeline:
             "horizon_tracker(层位)\n"
             "- 所有地震图像 → attribute_extractor + facies_classifier(沉积相)\n"
             "- well_log_panel → well_log_ml 或 well_log_analyzer(测井分析)\n\n"
+            "硬性约束：image_name 必须来自上面的清单；horizon_tracker 的种子点必须落在"
+            "对应 horizon_seed_bounds 内；测井分析只能使用 manifest 中 curves_present 列出的"
+            "曲线，depth_range 必须落在 manifest 的 depth_range 内。图像像素尺寸不是地震道数"
+            "或测井深度，不得据此虚构 CDP、样点或深度。\n\n"
             "仅输出JSON。"
         )
         # 注入 RAG 知识
@@ -337,9 +410,15 @@ class Pipeline:
                 step_num = step.get("step")
                 model_name = step.get("model")
                 image_name = step.get("image_name", "")
-                im = image_by_name.get(image_name) \
-                    or next(iter(image_by_name.values()), None)
+                im = image_by_name.get(image_name)
+                if im is None and pkg is None:
+                    im = next(iter(image_by_name.values()), None)
                 if im is None:
+                    self._log(
+                        f"  ⚠️ Step{step_num}: unknown image_name "
+                        f"'{image_name}', skip"
+                    )
+                    step_results[step_num] = []
                     continue
                 model = downstream.get(model_name)
                 if model is None:
@@ -444,20 +523,72 @@ class Pipeline:
         vm = pkg.view_meta(image.physical_view) or {}
         if vm:
             ctx["view_meta"] = vm
-            # 尝试加载原始数组
+            # 优先加载适配器输出的处理后数组；路径相对于 run_dir。
             arrays_dir = pkg.run_dir / "arrays"
-            arr_path = vm.get("array_path")
-            if not arr_path:
-                arr_path = vm.get("source_array")
-            if arr_path and arrays_dir.exists():
-                arr_file = arrays_dir / arr_path
-                if arr_file.is_file():
-                    import numpy as np
+            arr_path = next((vm.get(key) for key in (
+                "processed_array_path", "raw_array_path", "array_path", "source_array"
+            ) if vm.get(key)), None)
+            if arr_path:
+                import numpy as np
+
+                raw_path = Path(arr_path)
+                candidates = [raw_path] if raw_path.is_absolute() else [
+                    pkg.run_dir / raw_path,
+                    arrays_dir / raw_path,
+                    arrays_dir / raw_path.name,
+                ]
+                arr_file = next((p for p in candidates if p.is_file()), None)
+                if arr_file is not None:
                     try:
-                        ctx["array"] = np.load(arr_file)
-                    except Exception:
+                        arr = np.load(arr_file, allow_pickle=False)
+                        # 适配器渲染 profile 时会转置；下游数组也保持同一坐标方向。
+                        if image.physical_view in {
+                            "inline", "crossline", "user_provided_2d_patch"
+                        }:
+                            arr = arr.T
+                        ctx["array"] = arr
+                    except (OSError, ValueError):
                         pass
+
+        if image.physical_view == "well_log" or image.name == "well_log_panel":
+            curves = Pipeline._load_well_curves(pkg.run_dir)
+            if curves:
+                ctx["curves"] = curves
         return ctx if ctx else None
+
+    @staticmethod
+    def _load_well_curves(run_dir: Path) -> dict | None:
+        """无 pandas 依赖地读取适配器标准测井表，并补齐下游使用的 RT 别名。"""
+        import numpy as np
+
+        table = Path(run_dir) / "tables" / "well_logs_clean.csv"
+        if not table.is_file():
+            return None
+        try:
+            data = np.genfromtxt(
+                table,
+                delimiter=",",
+                names=True,
+                dtype=np.float32,
+                encoding="utf-8",
+            )
+        except (OSError, ValueError):
+            return None
+        names = list(data.dtype.names or ())
+        if not names:
+            return None
+        curves = {
+            name: np.atleast_1d(np.asarray(data[name], dtype=np.float32))
+            for name in names
+        }
+        depth_name = next(
+            (name for name in names if name.upper() in {"DEPTH", "MD", "TVD", "TVDSS"}),
+            names[0],
+        )
+        curves["depth"] = curves[depth_name]
+        if "RT" not in curves and "RES_DEEP" in curves:
+            curves["RT"] = curves["RES_DEEP"]
+        return curves
 
     @staticmethod
     def _dedup_detections(
@@ -474,7 +605,7 @@ class Pipeline:
                 cname = d.get("class_name", "unknown")
                 by_class.setdefault(cname, []).append(d)
             deduped: list[dict] = []
-            for cname, cdets in by_class.items():
+            for _cname, cdets in by_class.items():
                 # 按 confidence 降序
                 cdets.sort(key=lambda d: -d.get("confidence", 0))
                 kept = []
@@ -540,12 +671,16 @@ class Pipeline:
 
         if slice_axis == "inline":
             n_slices = volume.cube.shape[0]
-            coord_arr = volume.inlines; other_arr = volume.xlines
-            extract_fn = extract_inline_slice; axis_x_name = "crossline"
+            coord_arr = volume.inlines
+            other_arr = volume.xlines
+            extract_fn = extract_inline_slice
+            axis_x_name = "crossline"
         elif slice_axis == "crossline":
             n_slices = volume.cube.shape[1]
-            coord_arr = volume.xlines; other_arr = volume.inlines
-            extract_fn = extract_xline_slice; axis_x_name = "inline"
+            coord_arr = volume.xlines
+            other_arr = volume.inlines
+            extract_fn = extract_xline_slice
+            axis_x_name = "inline"
         else:
             raise ValueError(f"slice_axis must be inline|crossline, got {slice_axis}")
 

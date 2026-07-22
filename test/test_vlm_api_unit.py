@@ -24,10 +24,10 @@ import numpy as np
 from PIL import Image
 
 from pipeline import Pipeline, downstream
+from pipeline.adapter import PackageImage, RunPackage
 from pipeline.agents import AgentResult
 from pipeline.downstream.base import _REGISTRY
 from pipeline.vlm import VLMClient, VLMResponse, extract_json
-
 
 # ---------------------------------------------------------------------------
 # 工具
@@ -65,7 +65,7 @@ def _empty_response(model: str = "qwen3-vl-plus"):
 def _error_response(status: int, msg: str = "mock error",
                     err_type: str = "APIStatusError"):
     """构造一个 openai SDK 风格异常（带 status_code）。"""
-    err = type(err_type, (Exception,), {})("{}: {}".format(status, msg))
+    err = type(err_type, (Exception,), {})(f"{status}: {msg}")
     err.status_code = status
     return err
 
@@ -178,6 +178,7 @@ def test_api_backend_source_does_not_import_torch():
     （作为反例说明），所以这里用 AST 解析而不是字符串匹配。
     """
     import ast
+
     from pipeline.vlm_backends import openai_compatible as oc
     tree = ast.parse(inspect.getsource(oc))
 
@@ -291,7 +292,8 @@ def test_api_key_missing_raises(monkeypatch=None):
 def test_api_key_priority_dashscope_first():
     """未设 VLM_API_KEY 时，回退到 DASHSCOPE_API_KEY。"""
     from pipeline.vlm_backends.openai_compatible import (
-        OpenAICompatibleVLMBackend, _resolve_api_key,
+        OpenAICompatibleVLMBackend,
+        _resolve_api_key,
     )
     mp = _MonkeyPatch()
     try:
@@ -533,8 +535,8 @@ def test_api_timeout_is_retryable():
 
 def test_call_json_parses_valid_json():
     """call_json 应该把响应里的 JSON 抽出来填到 data。"""
-    from pipeline.vlm_backends.openai_compatible import OpenAICompatibleVLMBackend
     from pipeline.vlm import _call_json_with_backend
+    from pipeline.vlm_backends.openai_compatible import OpenAICompatibleVLMBackend
     backend = OpenAICompatibleVLMBackend(
         api_key="k", base_url="https://x/v1", max_retries=0,
     )
@@ -558,8 +560,8 @@ def test_call_json_parses_valid_json():
 # ---------------------------------------------------------------------------
 
 def test_call_json_parses_markdown_wrapped_json():
-    from pipeline.vlm_backends.openai_compatible import OpenAICompatibleVLMBackend
     from pipeline.vlm import _call_json_with_backend
+    from pipeline.vlm_backends.openai_compatible import OpenAICompatibleVLMBackend
     backend = OpenAICompatibleVLMBackend(
         api_key="k", base_url="https://x/v1", max_retries=0,
     )
@@ -581,8 +583,8 @@ def test_call_json_parses_markdown_wrapped_json():
 
 def test_schema_failure_triggers_one_repair_retry():
     """第一次响应 schema 不过 -> 重试一次（带上一份 JSON + 错误）。"""
-    from pipeline.vlm_backends.openai_compatible import OpenAICompatibleVLMBackend
     from pipeline.vlm import _call_json_with_backend
+    from pipeline.vlm_backends.openai_compatible import OpenAICompatibleVLMBackend
     backend = OpenAICompatibleVLMBackend(
         api_key="k", base_url="https://x/v1", max_retries=0,
     )
@@ -607,7 +609,8 @@ def test_schema_failure_triggers_one_repair_retry():
         # 简单版：每次返回 responses[0] 然后切到 responses[1]
         calls = {"v": 0}
         def serve(**k):
-            i = calls["v"]; calls["v"] += 1
+            i = calls["v"]
+            calls["v"] += 1
             return responses[i]
         with patch.object(backend, "_build_client") as bc2:
             bc2.return_value = SimpleNamespace(chat=SimpleNamespace(
@@ -628,8 +631,8 @@ def test_schema_failure_triggers_one_repair_retry():
 
 def test_no_infinite_loop_with_both_retries():
     """即使 network 重试 + schema 重试都失败，总次数也应有界。"""
-    from pipeline.vlm_backends.openai_compatible import OpenAICompatibleVLMBackend
     from pipeline.vlm import _call_json_with_backend
+    from pipeline.vlm_backends.openai_compatible import OpenAICompatibleVLMBackend
     backend = OpenAICompatibleVLMBackend(
         api_key="k", base_url="https://x/v1",
         max_retries=2,  # 初次+2=3 次
@@ -716,6 +719,7 @@ def _make_minimal_run_dir(tmp: Path) -> Path:
     并塞入一张合成 PNG 让 image 能被 PIL 打开。
     """
     import json as _json
+
     from PIL import Image as _Image
     run = tmp / "fake_sample"
     (run / "assets" / "seismic").mkdir(parents=True)
@@ -797,6 +801,7 @@ def test_end_to_end_pipeline_with_api_backend_mock():
     """
     import json as _json
     import tempfile
+
     from PIL import Image as _Image
 
     from pipeline.vlm_backends.openai_compatible import OpenAICompatibleVLMBackend
@@ -857,7 +862,8 @@ def test_end_to_end_pipeline_with_api_backend_mock():
 
         def fake_create(**kwargs):
             call_log.append("call")
-            i = n["i"]; n["i"] += 1
+            i = n["i"]
+            n["i"] += 1
             return responses[i]
 
         # 4) 构造 VLMClient(backend='api') + Pipeline
@@ -895,6 +901,73 @@ def test_end_to_end_pipeline_with_api_backend_mock():
             if original_sam is not None:
                 _REGISTRY["sam"] = original_sam
             mp.restore()
+
+
+def test_adapter_context_loads_processed_array_and_well_curves(tmp_path):
+    """根流水线应消费 geo_adapter 的标准数组路径和测井表。"""
+    arrays = tmp_path / "arrays"
+    tables = tmp_path / "tables"
+    arrays.mkdir()
+    tables.mkdir()
+    np.save(arrays / "inline_processed.npy", np.arange(12).reshape(3, 4))
+    (tables / "well_logs_clean.csv").write_text(
+        "MD,GR,RES_DEEP\n1000,80,2\n1001,40,30\n",
+        encoding="utf-8",
+    )
+    manifest = {
+        "seismic": {"views": {"inline": {
+            "physical_view": "inline",
+            "processed_array_path": "arrays/inline_processed.npy",
+            "array_shape": [3, 4],
+        }}},
+        "well_logs": {"depth_range": [1000, 1001]},
+    }
+    profile = PackageImage(
+        "seismic_inline", tmp_path / "inline.png", "inline", Image.new("RGB", (4, 3)),
+    )
+    well = PackageImage(
+        "well_log_panel", tmp_path / "well.png", "well_log_panel",
+        Image.new("RGB", (4, 3)),
+    )
+    pkg = RunPackage(
+        run_dir=tmp_path,
+        sample_id="x",
+        manifest=manifest,
+        request={},
+        system_prompt="",
+        user_prompt="",
+        images=[profile, well],
+        expected_schema={},
+    )
+
+    profile_ctx = Pipeline._build_step_context(profile, pkg)
+    well_ctx = Pipeline._build_step_context(well, pkg)
+
+    assert profile_ctx["array"].shape == (4, 3)
+    assert well_ctx["curves"]["depth"].tolist() == [1000.0, 1001.0]
+    assert well_ctx["curves"]["RT"].tolist() == [2.0, 30.0]
+
+
+def test_competition_plan_depth_range_is_constrained_by_manifest():
+    pkg = SimpleNamespace(manifest={"well_logs": {"depth_range": [1000, 1100]}})
+    plan = {
+        "workflow_steps": [{
+            "step": 1,
+            "model": "well_log_ml",
+            "instruction": {
+                "analysis_type": "full",
+                "depth_range": {"top_m": 0, "bottom_m": 384},
+            },
+        }],
+    }
+
+    normalized = Pipeline._normalize_competition_plan(plan, pkg)
+
+    assert normalized["workflow_steps"][0]["instruction"]["depth_range"] == {
+        "top_m": 1000.0,
+        "bottom_m": 1100.0,
+    }
+    assert normalized["plan_adjustments"]
 
 
 # ---------------------------------------------------------------------------

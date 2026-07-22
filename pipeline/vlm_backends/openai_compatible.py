@@ -139,6 +139,7 @@ def _encode_pil_to_data_url(
 def _encode_path_to_data_url(
     path: str | Path,
     image_format: str = "PNG",
+    jpeg_quality: int = 95,
     max_edge: int = 0,
 ) -> tuple[str, tuple[int, int], int]:
     """从磁盘读图编码为 data URL。"""
@@ -148,8 +149,12 @@ def _encode_path_to_data_url(
     with Image.open(p) as img:
         # 读后再 reopen 一份（with 关闭后无法 save）
         img.load()
-        return _encode_pil_to_data_url(img, image_format=image_format,
-                                       max_edge=max_edge)
+        return _encode_pil_to_data_url(
+            img,
+            image_format=image_format,
+            jpeg_quality=jpeg_quality,
+            max_edge=max_edge,
+        )
 
 
 def _normalize_image(
@@ -172,8 +177,12 @@ def _normalize_image(
             jpeg_quality=jpeg_quality, max_edge=max_edge,
         )
     if isinstance(img, (str, Path)):
-        return _encode_path_to_data_url(img, image_format=image_format,
-                                        max_edge=max_edge)
+        return _encode_path_to_data_url(
+            img,
+            image_format=image_format,
+            jpeg_quality=jpeg_quality,
+            max_edge=max_edge,
+        )
     if isinstance(img, (bytes, bytearray, memoryview)):
         from PIL import Image  # 局部 import
         bio = io.BytesIO(bytes(img))
@@ -263,6 +272,14 @@ class OpenAICompatibleVLMBackend(VLMBackend):
             raise ValueError(
                 f"VLM_API_IMAGE_FORMAT must be PNG|JPEG|WEBP, got {self.image_format!r}"
             )
+        if self.max_retries < 0:
+            raise ValueError("VLM_API_MAX_RETRIES must be >= 0")
+        if self.timeout <= 0:
+            raise ValueError("VLM_TIMEOUT must be > 0")
+        if not 1 <= self.jpeg_quality <= 100:
+            raise ValueError("VLM_API_JPEG_QUALITY must be between 1 and 100")
+        if self.max_image_edge < 0:
+            raise ValueError("VLM_API_MAX_IMAGE_EDGE must be >= 0")
 
         self._client = None  # 惰性建连
 
@@ -281,8 +298,18 @@ class OpenAICompatibleVLMBackend(VLMBackend):
             api_key=self.api_key,
             base_url=self.base_url,
             timeout=self.timeout,
+            # 重试只由本类下面的显式退避循环控制，避免 SDK 默认重试叠加。
+            max_retries=0,
         )
         return self._client
+
+    def close(self) -> None:
+        """关闭 OpenAI SDK 的底层 HTTP 连接池。"""
+        client, self._client = self._client, None
+        if client is not None:
+            close = getattr(client, "close", None)
+            if callable(close):
+                close()
 
     # ---- 图片预处理 ------------------------------------------------------
 
