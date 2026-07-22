@@ -1,4 +1,5 @@
 """集中管理 VLM prompt 模板。"""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -16,7 +17,7 @@ def _load_system_prompt(md_file: str) -> str:
     idx = text.find(marker)
     if idx < 0:
         return text
-    body = text[idx + len(marker):]
+    body = text[idx + len(marker) :]
     next_h2 = body.find("\n## ")
     if next_h2 > 0:
         body = body[:next_h2]
@@ -44,7 +45,7 @@ TASK_MODEL_MAP = """任务→下游模型推荐:
 
 # ---- Autonomous workflow (test_loop.py 用) --------------------------------
 
-_PLANNING_FEWSHOT_SEISMIC = '''\
+_PLANNING_FEWSHOT_SEISMIC = """\
 示例1（地震剖面—断层检测场景）:
 {
   "scene_understanding": "地震剖面显示 CDP 60-100 存在同相轴错断（疑似断层），CDP 160-220 / 1100-1400ms 存在强负振幅（疑似亮点）",
@@ -79,9 +80,9 @@ _PLANNING_FEWSHOT_SEISMIC = '''\
   ],
   "verification_strategy": "per_step",
   "max_iterations": 2
-}'''
+}"""
 
-_PLANNING_FEWSHOT_LOG = '''\
+_PLANNING_FEWSHOT_LOG = """\
 示例2（测井曲线场景）:
 {
   "scene_understanding": "GR 曲线在 1200-1255m、1550-1625m 处显著低于 50 API（砂岩段）；RT 在 1555-1595m 高阻异常，DEN 同段偏低（含气特征）",
@@ -116,9 +117,9 @@ _PLANNING_FEWSHOT_LOG = '''\
   ],
   "verification_strategy": "batch",
   "max_iterations": 2
-}'''
+}"""
 
-_PLANNING_FEWSHOT_FACIES = '''\
+_PLANNING_FEWSHOT_FACIES = """\
 示例3（沉积相分析场景）:
 {
   "scene_understanding": "剖面显示多种反射构型：上部平行连续（陆棚），中部S形前积（三角洲），下部杂乱+透镜状（浊积/河道）",
@@ -144,9 +145,9 @@ _PLANNING_FEWSHOT_FACIES = '''\
   ],
   "verification_strategy": "batch",
   "max_iterations": 1
-}'''
+}"""
 
-_PLANNING_FEWSHOT_HORIZON = '''\
+_PLANNING_FEWSHOT_HORIZON = """\
 示例4（层位追踪场景）:
 {
   "scene_understanding": "CDP 50-250 存在一条横向连续强反射轴 T3，波峰特征明显，约在 1200-1300ms 之间缓慢倾斜",
@@ -168,13 +169,29 @@ _PLANNING_FEWSHOT_HORIZON = '''\
   ],
   "verification_strategy": "per_step",
   "max_iterations": 2
-}'''
+}"""
 
 
 def workflow_planning_prompt() -> str:
     return (
-        "你是地球物理AI工作流规划器。分析图像后，自主决定需要调用哪些下游模型、"
-        "按什么顺序、用哪些参数。\n\n"
+        "你是保守、可审计的地球物理AI工作流规划器。每次只分析当前消息中的一个物理视图，"
+        "自主决定是否需要调用下游模型、按什么顺序、用哪些参数。\n\n"
+        "=== 证据政策（优先级最高）===\n"
+        "- target_classes 只是待检查类别，不是目标存在的证据；不得为了完成任务强行报告目标。\n"
+        "- analysis_status 必须是 evidence_present、suspected、insufficient 或 no_target_visible。\n"
+        "- 每条 visual_evidence 必须报告 image_name、class_name、status、observations、confidence；"
+        "present/suspected 还必须给出 bbox_xyxy_norm 和至少一条像素证据。\n"
+        "- suspected 表示已经能定位候选区，所以 bbox_xyxy_norm 绝不能是 null；"
+        "若无法画出候选框，必须改为 insufficient 或 absent。\n"
+        "- PNG 只能支持形态与趋势观察，不得从 PNG 读取精确振幅、频率、道号、样点、深度或测井数值。"
+        "数值只能引用消息中的 structured numeric summary。\n"
+        "- 只有 present/suspected 且 bbox 有效的候选才可生成目标检测步骤；"
+        "absent/insufficient 不得为了凑任务而安排 systematic scan，workflow_steps 应为空。\n"
+        "- well_log_panel 没有横向空间证据，fault 和 channel 只能填 absent/insufficient；"
+        "测井可支持 reservoir_candidate，但精确深度和曲线值必须来自 structured numeric summary。\n"
+        "- structured numeric summary 的 representative_samples 是稀疏采样点，不得据此虚构连续区间；"
+        "测井步骤应分析 manifest 声明的完整深度范围，不要自造阈值规则或精确层段边界。\n"
+        "- 图像原生采样很小时必须指出 coarse native sampling，不能把放大后的像素当成新增细节。\n\n"
         f"{available_models_desc()}\n\n"
         "=== 任务→模型推荐（请严格遵循，不要给任务错配模型）===\n"
         f"{TASK_MODEL_MAP}\n\n"
@@ -200,16 +217,23 @@ def workflow_planning_prompt() -> str:
         "HRNet预训练河道检测，多尺度集成预测。\n"
         "- well_log_ml.instruction 必须包含 analysis_type(lithology|fluid|full)。\n"
         "RandomForest岩石物理知识模型, 6类岩性+流体识别, 模型缓存到~/.cache。\n\n"
-        # few-shot 示例
-        f"{_PLANNING_FEWSHOT_SEISMIC}\n\n"
-        f"{_PLANNING_FEWSHOT_LOG}\n\n"
-        f"{_PLANNING_FEWSHOT_FACIES}\n\n"
-        f"{_PLANNING_FEWSHOT_HORIZON}\n\n"
-        "现在请按同样格式，针对给定图像输出一个工作流计划。仅输出JSON。"
+        "=== 无目标负样例（格式参考）===\n"
+        '{"scene_understanding":"仅见平滑周期条带，无可验证错断或河道边界",'
+        '"analysis_status":"no_target_visible",'
+        '"visual_evidence":[{"image_name":"seismic_inline","class_name":"fault",'
+        '"status":"absent","bbox_xyxy_norm":null,"observations":["未见同相轴错断或终止"],'
+        '"confidence":0.88,"limitations":["单剖面只能排除明显目标"]}],'
+        '"workflow_steps":[],"verification_strategy":"none","max_iterations":1}\n\n'
+        "现在针对当前单一物理视图输出同样结构的工作流计划。仅输出JSON。"
     )
 
 
 VERIFICATION_PROMPT = """你是地球物理验证专家。根据原始图像验证下游模型的每条检测结果。
+
+待检查类别和原始计划不是阳性证据。每次消息只包含一个物理视图，只能验证该图上的结果。
+PNG 只支持形态复核，不支持精确振幅、频率、道号、样点、深度或测井数值。
+只有可指出同相轴错断、终止、连续边界或其他明确像素依据时才能判真；证据不足时应保留存疑，
+不得为了匹配任务类别而补造遗漏目标。若 retry 指向当前运行环境不可用的模型，need_retry 必须为 false。
 
 === 地质真伪判断准则 ===
 
@@ -264,6 +288,7 @@ JSON:
 
 
 # ---- 四个独立 Agent 的 system prompt（从 prompts/*.md 读取） --------------
+
 
 def seismic_interp_prompt() -> str:
     return _load_system_prompt("seismic_interp_agent.md")

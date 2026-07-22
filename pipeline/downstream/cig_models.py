@@ -9,6 +9,8 @@ CIG-Bench (douyimin/CIG-bench, pip install cig-bench):
 """
 from __future__ import annotations
 
+import importlib.util
+
 import numpy as np
 
 
@@ -31,6 +33,17 @@ class CigFaultDetector:
     def __init__(self):
         self._predictor = None
         self._available = None
+
+    def runtime_status(self) -> tuple[bool, str]:
+        if importlib.util.find_spec("cig_bench") is None:
+            return False, "cig-bench is not installed"
+        if importlib.util.find_spec("torch") is None:
+            return False, "torch is not installed"
+        import torch
+
+        if not torch.cuda.is_available():
+            return False, "CUDA GPU is not available"
+        return True, "ready"
 
     def _load(self):
         if self._available is not None:
@@ -132,6 +145,17 @@ class CigChannelDetector:
         self._predictor = None
         self._available = None
 
+    def runtime_status(self) -> tuple[bool, str]:
+        if importlib.util.find_spec("cig_bench") is None:
+            return False, "cig-bench is not installed"
+        if importlib.util.find_spec("torch") is None:
+            return False, "torch is not installed"
+        import torch
+
+        if not torch.cuda.is_available():
+            return False, "CUDA GPU is not available"
+        return True, "ready"
+
     def _load(self):
         if self._available is not None:
             return self._available
@@ -195,7 +219,6 @@ class CigChannelDetector:
 
 
 # ── 共享工具 ────────────────────────────────────────────────────────────────
-
 def _get_volume(context: dict | None) -> np.ndarray | None:
     """从 context 获取 3D 地震数组。"""
     if context is None:

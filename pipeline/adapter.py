@@ -31,10 +31,27 @@ class PackageImage:
     path: Path
     physical_view: str
     pil: Image.Image
+    analysis_path: Path | None = None
+    analysis_pil: Image.Image | None = None
+    native_shape: list[int] | None = None
+    axis_labels: list[str] | None = None
+    source_indices: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def vlm_pil(self) -> Image.Image:
+        """Coordinate-aware image for VLM; clean model image remains ``pil``."""
+        return self.analysis_pil or self.pil
 
     def to_dict(self) -> dict:
-        return {"name": self.name, "path": str(self.path),
-                "physical_view": self.physical_view}
+        return {
+            "name": self.name,
+            "path": str(self.path),
+            "analysis_path": str(self.analysis_path) if self.analysis_path else None,
+            "physical_view": self.physical_view,
+            "native_shape": self.native_shape,
+            "axis_labels": self.axis_labels,
+            "source_indices": self.source_indices,
+        }
 
 
 @dataclass
@@ -48,6 +65,7 @@ class RunPackage:
     user_prompt: str
     images: list[PackageImage]
     expected_schema: dict
+    numeric_summary: dict = field(default_factory=dict)
     target_classes: list[str] = field(default_factory=list)
     task_type: str | None = None
 
@@ -80,6 +98,7 @@ class RunPackage:
             "target_classes": list(self.target_classes),
             "n_images": len(self.images),
             "image_views": [im.physical_view for im in self.images],
+            "numeric_summary_source": self.numeric_summary.get("source"),
             "seismic_shape": (self.manifest.get("seismic", {}) or {}).get("shape"),
             "run_mode": self.manifest.get("run_mode"),
             "fusion_permission": (self.manifest.get("alignment", {}) or {})
@@ -93,6 +112,12 @@ def _read_text(path: Path) -> str:
 
 def _read_json(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _load_rgb(path: Path) -> Image.Image:
+    """Load an image eagerly and release the Windows file handle immediately."""
+    with Image.open(path) as image:
+        return image.convert("RGB")
 
 
 def load_run(run_dir: str | Path) -> RunPackage:
@@ -112,6 +137,12 @@ def load_run(run_dir: str | Path) -> RunPackage:
     system_prompt = _read_text(_need("prompts/system_prompt.txt"))
     user_prompt = _read_text(_need("prompts/user_prompt.txt"))
     expected_schema = _read_json(_need("schemas/expected_model_output.schema.json"))
+    numeric_summary: dict = {}
+    summary_rel = (manifest.get("well_logs") or {}).get("numeric_summary_path")
+    if summary_rel:
+        summary_path = run_dir / summary_rel
+        if summary_path.is_file():
+            numeric_summary = _read_json(summary_path)
 
     # 从 request.messages[].content 里抓 image 项，路径相对于 run_dir
     images: list[PackageImage] = []
@@ -128,12 +159,27 @@ def load_run(run_dir: str | Path) -> RunPackage:
             if not img_path.is_file():
                 # geo_adapter 允许 QC 图缺失，模型图必须在
                 continue
-            images.append(PackageImage(
-                name=c.get("name", img_path.stem),
-                path=img_path,
-                physical_view=c.get("physical_view", "unknown"),
-                pil=Image.open(img_path).convert("RGB"),
-            ))
+            analysis_path = None
+            analysis_pil = None
+            analysis_rel = c.get("analysis_path")
+            if analysis_rel:
+                candidate = (run_dir / analysis_rel).resolve()
+                if candidate.is_file():
+                    analysis_path = candidate
+                    analysis_pil = _load_rgb(candidate)
+            images.append(
+                PackageImage(
+                    name=c.get("name", img_path.stem),
+                    path=img_path,
+                    physical_view=c.get("physical_view", "unknown"),
+                    pil=_load_rgb(img_path),
+                    analysis_path=analysis_path,
+                    analysis_pil=analysis_pil,
+                    native_shape=c.get("native_shape"),
+                    axis_labels=c.get("axis_labels"),
+                    source_indices=c.get("source_indices") or {},
+                )
+            )
 
     task = manifest.get("task") or {}
     return RunPackage(
@@ -145,6 +191,7 @@ def load_run(run_dir: str | Path) -> RunPackage:
         user_prompt=user_prompt,
         images=images,
         expected_schema=expected_schema,
+        numeric_summary=numeric_summary,
         target_classes=list(task.get("target_classes") or []),
         task_type=task.get("type"),
     )

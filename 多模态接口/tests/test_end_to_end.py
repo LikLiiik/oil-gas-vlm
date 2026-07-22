@@ -53,8 +53,31 @@ def test_request_references_only_existing_assets(prepared_run) -> None:
             assert reference and (prepared_run / reference).is_file()
             if item["type"] == "image":
                 image_views.append(item["physical_view"])
+                assert (prepared_run / item["analysis_path"]).is_file()
+                if item["physical_view"] != "well_log_panel":
+                    assert len(item["native_shape"]) == 2
+                    assert len(item["axis_labels"]) == 2
     assert len(image_views) == len(set(image_views))  # every physical view remains independent
     assert "inline" in image_views and "crossline" in image_views
+
+
+def test_structured_well_summary_is_authoritative(prepared_run) -> None:
+    manifest = json.loads((prepared_run / "manifest.json").read_text(encoding="utf-8"))
+    rel = manifest["well_logs"]["numeric_summary_path"]
+    summary = json.loads((prepared_run / rel).read_text(encoding="utf-8"))
+    assert summary["source"] == "structured_well_log_table"
+    assert "PNG is trend-only" in summary["policy"]
+    assert summary["curve_stats"]["GR"]["count"] > 0
+    assert len(summary["representative_samples"]) == 9
+
+    request = json.loads((prepared_run / "request.json").read_text(encoding="utf-8"))
+    json_items = [
+        item
+        for message in request["messages"]
+        for item in message["content"]
+        if item["type"] == "json"
+    ]
+    assert any(item.get("name") == "well_numeric_summary" for item in json_items)
 
 
 def test_cli_validate_and_show_manifest(prepared_run, project_root) -> None:

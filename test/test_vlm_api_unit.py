@@ -791,6 +791,66 @@ def _make_minimal_run_dir(tmp: Path) -> Path:
     return run
 
 
+def test_adapter_planning_calls_vlm_once_per_physical_view(tmp_path):
+    """Each view gets its own VLM call, preventing multi-image attention loss."""
+    import json as _json
+
+    run_dir = _make_minimal_run_dir(tmp_path)
+    second_path = run_dir / "assets" / "seismic" / "crossline_model.png"
+    Image.new("RGB", (32, 32), (255, 255, 255)).save(second_path)
+
+    manifest_path = run_dir / "manifest.json"
+    manifest = _json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["seismic"]["views"]["crossline"] = {
+        "physical_view": "crossline", "array_shape": [4, 4],
+        "axis_labels": ["inline_index", "sample_index"],
+        "source_indices": {"crossline_index": 2},
+        "model_image_path": "assets/seismic/crossline_model.png",
+    }
+    manifest_path.write_text(_json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+
+    request_path = run_dir / "request.json"
+    request = _json.loads(request_path.read_text(encoding="utf-8"))
+    request["messages"][0]["content"].append({
+        "type": "image", "name": "seismic_crossline",
+        "path": "assets/seismic/crossline_model.png", "physical_view": "crossline",
+        "native_shape": [4, 4], "axis_labels": ["inline_index", "sample_index"],
+        "source_indices": {"crossline_index": 2},
+    })
+    request_path.write_text(_json.dumps(request, ensure_ascii=False), encoding="utf-8")
+
+    class FakeVLM:
+        def __init__(self):
+            self.calls = []
+        def call_json(self, system_prompt, images, user_text, **kwargs):
+            self.calls.append((len(images), user_text))
+            image_name = ("seismic_crossline" if "seismic_crossline" in user_text
+                          else "seismic_inline")
+            data = {
+                "scene_understanding": f"{image_name}: no diagnostic target",
+                "analysis_status": "no_target_visible",
+                "visual_evidence": [{
+                    "image_name": image_name, "class_name": "fault",
+                    "status": "absent", "observations": [], "confidence": 0.8,
+                }],
+                "max_iterations": 1, "workflow_steps": [],
+            }
+            return VLMResponse(
+                text=_json.dumps(data), data=data, elapsed_s=0.0, attempts=1,
+                schema_valid=True, schema_errors=[],
+            )
+
+    vlm = FakeVLM()
+    report = Pipeline(vlm=vlm, verbose=False).run_from_adapter(
+        run_dir=run_dir, out_dir=tmp_path / "out", verify=False,
+    )
+    assert report["ok"] is True
+    assert len(vlm.calls) == 2
+    assert [n_images for n_images, _ in vlm.calls] == [1, 1]
+    assert len(report["vlm_plan"]["visual_evidence"]) == 2
+    assert report["vlm_plan"]["workflow_steps"] == []
+
+
 def test_end_to_end_pipeline_with_api_backend_mock():
     """完整 Pipeline.run_from_adapter + API 后端 + mock OpenAI client。
 
@@ -834,6 +894,13 @@ def test_end_to_end_pipeline_with_api_backend_mock():
         #    满足 WORKFLOW_PLAN_SCHEMA：scene_understanding + workflow_steps (model=sam, 合法 instruction)
         plan_data = {
             "scene_understanding": "fake inline",
+            "analysis_status": "evidence_present",
+            "visual_evidence": [{
+                "image_name": "seismic_inline", "class_name": "fault",
+                "status": "present",
+                "bbox_xyxy_norm": [0.125, 0.125, 0.375, 0.375],
+                "observations": ["unit-test offset"], "confidence": 0.9,
+            }],
             "max_iterations": 1,
             "workflow_steps": [{
                 "step": 1, "model": "sam",
@@ -891,7 +958,7 @@ def test_end_to_end_pipeline_with_api_backend_mock():
             assert len(call_log) == 2, f"expected 2 VLM calls, got {len(call_log)}"
             assert report.get("ok") is True, f"report not ok: {report}"
             plan = report.get("vlm_plan") or {}
-            assert plan.get("scene_understanding") == "fake inline"
+            assert plan.get("scene_understanding") == "[seismic_inline] fake inline"
             # 下游确实执行了
             downstream_section = report.get("downstream") or {}
             assert downstream_section.get("n_detections", 0) >= 1
@@ -968,6 +1035,30 @@ def test_competition_plan_depth_range_is_constrained_by_manifest():
         "bottom_m": 1100.0,
     }
     assert normalized["plan_adjustments"]
+
+
+def test_competition_plan_removes_vlm_authored_well_rules():
+    pkg = SimpleNamespace(manifest={"well_logs": {"depth_range": [1000, 1100]}})
+    plan = {
+        "workflow_steps": [{
+            "step": 1,
+            "model": "well_log_analyzer",
+            "instruction": {
+                "analysis_type": "full_analysis",
+                "depth_range": {"top_m": 1050, "bottom_m": 1062.5},
+                "rules": [{
+                    "class_name": "sand",
+                    "rule": "GR < 55 AND RES_DEEP > 18",
+                }],
+            },
+        }],
+    }
+    normalized = Pipeline._normalize_competition_plan(plan, pkg)
+    instruction = normalized["workflow_steps"][0]["instruction"]
+    assert instruction["depth_range"] == {"top_m": 1000.0, "bottom_m": 1100.0}
+    assert "rules" not in instruction
+    assert "removed VLM-authored numeric rules" in " ".join(
+        normalized["plan_adjustments"])
 
 
 # ---------------------------------------------------------------------------

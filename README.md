@@ -54,7 +54,7 @@ runs/<sample_id>/
      │
      ▼  python -m pipeline --run-dir ...
      │
-Phase 1: VLM 规划 (看N张图+任务+11个模型清单→自主选模型+参数)
+Phase 1: VLM 分视图规划 (每个物理视图单独分析→合并证据与可执行步骤)
 Phase 2: 执行下游 (遍历workflow_steps, 调对应模型)
 Phase 3: VLM 验证 (下游结果+原图→逐条判断真伪)
 Phase 4: 迭代 (need_retry→调整参数→回到Phase 2, 最多N轮)
@@ -119,10 +119,12 @@ python -m pipeline `
 
 1. **API 模式不需要本地 GPU**——只装 `requirements-api.txt` 就能在笔记本上跑。
 2. **API 模式不加载本地模型权重**——torch / transformers 都不会被 import。
-3. **API 调用可能产生费用**——完整闭环中 VLM 会被调用多次（1 次规划 + 每次验证 1 次）。**第一轮 A/B 务必加 `--no-verify --max-iter 1`** 控制成本。
+3. **API 调用可能产生费用**——规划阶段按物理视图逐图调用，验证阶段也按图调用。**第一轮 A/B 务必加 `--no-verify --max-iter 1`** 控制成本。
 4. **本地与 API 用相同 Prompt、Schema、下游模型**——便于公平比较。
-5. **API 大模型主要接收 PNG 图像**——SEG-Y / NPY / LAS 原始数值仍由下游专业模型与算法处理，VLM 只看到可视化后的图。
+5. **地震 PNG 用于构造和位置证据，不用于恢复原始振幅精度**——VLM 使用带坐标、色标和原生网格尺寸的分析图；下游仍使用无标注的模型图和 NPY 数组。
 6. **`.env` 已在 `.gitignore` 里**——`.env.example` 可以提交作为模板。
+7. **测井精确数值来自结构化摘要**——曲线统计与代表性采样点来自 CSV/数组；PNG 只用于趋势判断，禁止靠像素估读精确值。
+8. **目标类别只是候选，不是图中存在的证据**——没有可定位的像素证据时允许输出 `absent` / `insufficient` 和空工作流；运行前还会过滤当前机器不可执行的下游模型。
 
 ## 输出
 

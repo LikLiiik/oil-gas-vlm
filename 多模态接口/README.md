@@ -583,6 +583,7 @@ arrays/well_interpolated_mask.npy
 arrays/curve_available.npy
 tables/well_logs_raw.csv
 tables/well_logs_clean.csv
+tables/well_numeric_summary.json
 tables/curve_mapping.csv
 tables/well_location_normalized.json
 tables/trajectory_normalized.csv
@@ -606,14 +607,15 @@ schemas/expected_model_output.schema.json
 
 Qwen3-VL 不直接接收 SEG-Y、LAS、CSV 或 NPY。模型调用端应从运行目录加载：
 
-- `assets/seismic/*_model.png`：独立地震物理视图。
+- `request.json` 中每个地震图的 `analysis_path`：带坐标轴、色标、原生网格尺寸的 VLM 分析图；下游模型仍使用 `path` 指向的无标注图。
 - `assets/well_logs/well_log_panel.png`：测井综合图。
+- `tables/well_numeric_summary.json`：由清洗后的结构化测井表生成的曲线统计和代表性采样点，是数值结论的权威来源。
 - `prompts/system_prompt.txt`：系统约束。
 - `prompts/user_prompt.txt`：当前样本任务说明。
 - `manifest.json`：曲线、单位、深度、CRS、时深关系和限制。
 - `schemas/expected_model_output.schema.json`：模型输出格式。
 
-`arrays/*.npy` 和 `tables/*.csv` 用于数值复核与下游程序，当前 `request.json` 不把这些二进制数组直接传给视觉语言模型。
+`arrays/*.npy` 和 `tables/*.csv` 用于数值复核与下游程序，当前 `request.json` 不把这些二进制数组直接传给视觉语言模型。地震 PNG 只支持构造、连续性和位置判断，不能替代原始振幅体；测井 PNG 只支持趋势判断，精确数值必须来自结构化摘要。
 
 ### 14.2 `request.json` 转换规则
 
@@ -626,7 +628,7 @@ Qwen3-VL 不直接接收 SEG-Y、LAS、CSV 或 NPY。模型调用端应从运行
 | `type: json` | 读取 JSON，序列化为带说明的文本块 |
 | `expected_output_schema` | 读取 Schema，追加到用户文本并用于本地结果校验 |
 
-不同地震视图必须按 `request.json` 顺序作为独立图片输入，不得合成 RGB。图片名称和 `physical_view` 应同时写入文字上下文，便于模型区分 inline、crossline、切片和局部 Patch。
+不同地震视图不得合成 RGB。为避免多图注意力稀释，推荐每次只分析一个 `physical_view`，再在程序侧合并各视图证据。图片名称、`physical_view`、`native_shape`、`axis_labels` 和 `source_indices` 应同时写入文字上下文。
 
 ### 14.3 Qwen Transformers 本地推理参考
 

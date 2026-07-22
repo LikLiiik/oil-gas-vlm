@@ -57,6 +57,7 @@ class WellLogsInfo(BaseModel):
     depth_range: list[float] | None = None
     curve_order: list[str] = Field(default_factory=list)
     curves: dict[str, CurveInfo] = Field(default_factory=dict)
+    numeric_summary_path: str | None = None
 
 
 class CRSInfo(BaseModel):

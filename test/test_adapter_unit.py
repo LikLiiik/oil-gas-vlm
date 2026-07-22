@@ -54,6 +54,21 @@ def test_load_run_reads_all_images():
         assert isinstance(im, PackageImage)
         assert im.pil.mode == "RGB"
 
+def test_load_run_prefers_coordinate_aware_vlm_images_and_numeric_summary():
+    pkg = load_run(DEMO_RUN)
+    seismic = [im for im in pkg.images if im.physical_view != "well_log_panel"]
+
+    assert seismic
+    assert all(im.analysis_path and im.analysis_path.is_file() for im in seismic)
+    assert all(im.vlm_pil.mode == "RGB" for im in seismic)
+    assert all(im.native_shape and len(im.native_shape) == 2 for im in seismic)
+    assert all(im.axis_labels and len(im.axis_labels) == 2 for im in seismic)
+
+    assert pkg.numeric_summary["source"] == "structured_well_log_table"
+    assert "authoritative_for_numeric_values" in pkg.numeric_summary["policy"]
+    assert pkg.numeric_summary["curve_stats"]
+    assert pkg.numeric_summary["representative_samples"]
+
 def test_image_by_name_lookup():
     pkg = load_run(DEMO_RUN)
     im = pkg.image_by_name("seismic_inline")
