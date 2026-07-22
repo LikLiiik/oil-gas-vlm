@@ -9,12 +9,21 @@ class SeismicObservation(BaseModel):
     type: str
     description: str
     image_name: str
-    bbox_xyxy_norm: list[float] = Field(min_length=4, max_length=4)
+    status: Literal["present", "suspected", "insufficient", "absent"]
+    bbox_xyxy_norm: list[float] | None = Field(default=None, min_length=4, max_length=4)
     confidence: float = Field(ge=0, le=1)
     evidence: list[str] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_box(self) -> "SeismicObservation":
+        if self.status in {"present", "suspected"}:
+            if self.bbox_xyxy_norm is None:
+                raise ValueError("present/suspected 观察必须提供 bbox_xyxy_norm")
+            if not self.evidence:
+                raise ValueError("present/suspected 观察必须提供可见像素证据")
+        if self.bbox_xyxy_norm is None:
+            return self
         x1, y1, x2, y2 = self.bbox_xyxy_norm
         if not all(0 <= value <= 1 for value in self.bbox_xyxy_norm) or x1 > x2 or y1 > y2:
             raise ValueError("bbox_xyxy_norm 必须在 0..1 且满足 x1<=x2、y1<=y2")
@@ -32,6 +41,8 @@ class WellObservation(BaseModel):
     description: str
     confidence: float = Field(ge=0, le=1)
     evidence_curves: list[str] = Field(default_factory=list)
+    evidence_source: Literal["structured_data", "image_trend_only"]
+    limitations: list[str] = Field(default_factory=list)
 
 
 class WellLogAnalysis(BaseModel):
@@ -72,4 +83,3 @@ class ExpectedModelOutput(BaseModel):
     cross_modal_analysis: CrossModalAnalysis
     downstream_plan: DownstreamPlan
     uncertainty: Uncertainty
-

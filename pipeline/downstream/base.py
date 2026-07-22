@@ -30,12 +30,39 @@ def available_names() -> list[str]:
     return sorted(_REGISTRY.keys())
 
 
+def runtime_status(name: str) -> tuple[bool, str]:
+    """Cheap readiness probe that must not download weights or run inference."""
+    model = _REGISTRY.get(name)
+    if model is None:
+        return False, "not registered"
+    probe = getattr(model, "runtime_status", None)
+    if probe is None:
+        return True, "ready"
+    try:
+        ready, reason = probe()
+        return bool(ready), str(reason)
+    except Exception as exc:
+        return False, f"readiness probe failed: {exc}"
+
+
+def runnable_names() -> list[str]:
+    return [name for name in available_names() if runtime_status(name)[0]]
+
+
 def available_models_desc() -> str:
-    """生成给 VLM 看的下游模型清单文本。"""
-    lines = ["可用的下游模型:"]
-    for i, name in enumerate(available_names(), 1):
+    """Generate a runtime-accurate model list without loading large weights."""
+    ready_names = runnable_names()
+    lines = ["当前运行环境可执行的下游模型:"]
+    for i, name in enumerate(ready_names, 1):
         m = _REGISTRY[name]
         lines.append(f"{i}. {name}: {m.description}")
         lines.append(f"   必需字段: {m.required_fields}")
         lines.append(f"   输出: {m.output_shape}")
+    unavailable = [
+        f"{name} ({runtime_status(name)[1]})"
+        for name in available_names()
+        if name not in ready_names
+    ]
+    if unavailable:
+        lines.append("不可选择的模型: " + "; ".join(unavailable))
     return "\n".join(lines)

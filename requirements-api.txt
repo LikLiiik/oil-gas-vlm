@@ -1,0 +1,31 @@
+# ============================================================================
+# Oil-Gas VLM — 仅 API 模式的最小依赖（无本地 GPU 也能跑）
+# ============================================================================
+# 用法:
+#   pip install -r requirements-api.txt
+#   set VLM_BACKEND=api
+#   set VLM_API_KEY=...
+#   python -m pipeline --run-dir runs/<sample>
+#
+# 这一份刻意**不**包含 torch / transformers / accelerate / ultralytics 等重型
+# 依赖。可以在没有 GPU 的机器上跑 API 模式。
+# ============================================================================
+
+# VLM API
+openai>=1.40.0
+httpx[socks]>=0.27.0
+python-dotenv>=1.0.0
+
+# 基础科学计算（API 模式仍需要 SEG-Y 读写、几何计算）
+numpy>=1.24.0
+scipy>=1.10.0
+Pillow>=10.0.0
+matplotlib>=3.7.0
+segyio>=1.9.0
+
+# Schema 校验
+jsonschema>=4.19.0
+
+# 测井 / 沉积相分析（API 模式下，部分轻量下游仍会用到）
+scikit-learn>=1.3.0
+scikit-image>=0.22.0

@@ -36,6 +36,7 @@ def _load_image(path: str):
 
 def _cmd_geological_tasks(args) -> int:
     """--input {segy|image} --tasks fault,...   赛题主流程。"""
+    _apply_vlm_cli_overrides(args)
     from pipeline import Pipeline
     from pipeline.io import read_segy
     from pipeline.io.geometry import SliceGeometry
@@ -81,6 +82,7 @@ def _cmd_geological_tasks(args) -> int:
 
 def _cmd_agents(args) -> int:
     """--agent all|seismic|log|fusion  内部 4-Agent 流水线。"""
+    _apply_vlm_cli_overrides(args)
     from pipeline import Pipeline
 
     p = Pipeline(verbose=not args.quiet)
@@ -115,7 +117,8 @@ def _cmd_agents(args) -> int:
             print("--agent prospect 需要前置产物，请用 --agent all", file=sys.stderr)
             return 2
         else:
-            print(f"unknown agent {args.agent}", file=sys.stderr); return 2
+            print(f"unknown agent {args.agent}", file=sys.stderr)
+            return 2
         payload = r.to_dict()
 
     Path(args.output).write_text(
@@ -126,8 +129,36 @@ def _cmd_agents(args) -> int:
     return 0
 
 
+def _apply_vlm_cli_overrides(args) -> None:
+    """把 CLI 上的 VLM 参数写入 env（仅当用户显式提供时）。
+
+    顺序：CLI 显式 > 现有 env > 默认。VLMClient 在构造时读 env。
+    安全规则：**绝不**接收 API key，避免进 shell 历史 / 进程列表。
+    """
+    import os
+    from pathlib import Path
+
+    # 1) 先尝试从 .env 加载（不覆盖已有 env）
+    try:
+        from dotenv import load_dotenv  # type: ignore
+        env_path = Path(__file__).resolve().parent.parent / ".env"
+        if env_path.is_file():
+            load_dotenv(env_path, override=False)
+    except ImportError:
+        pass
+
+    # 2) CLI 显式参数覆盖（仅当用户传了）
+    if getattr(args, "vlm_backend", None):
+        os.environ["VLM_BACKEND"] = args.vlm_backend
+    if getattr(args, "vlm_model", None):
+        os.environ["VLM_MODEL"] = args.vlm_model
+    if getattr(args, "vlm_base_url", None):
+        os.environ["VLM_BASE_URL"] = args.vlm_base_url
+
+
 def _cmd_adapter(args) -> int:
     """--run-dir runs/<sample>   赛题主流程（走 geo_adapter）。"""
+    _apply_vlm_cli_overrides(args)
     from pipeline import Pipeline
 
     p = Pipeline(verbose=not args.quiet)
@@ -183,6 +214,17 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--output", type=str, default="/tmp/pipeline_output.json",
                    help="4-Agent 模式输出 JSON 路径")
     p.add_argument("--quiet", action="store_true")
+
+    # VLM 后端（与 VLM_BACKEND env 一致，CLI 优先）
+    p.add_argument("--vlm-backend", choices=["local", "api"], default=None,
+                   help="VLM 后端：local（默认，需 GPU/QWEN_VL_PATH）或 "
+                        "api（OpenAI 兼容，需 VLM_API_KEY）。"
+                        "CLI 显式 > VLM_BACKEND env > 默认 local。")
+    p.add_argument("--vlm-model", default=None,
+                   help="API 模式下覆盖 VLM_MODEL。默认 qwen3-vl-plus。")
+    p.add_argument("--vlm-base-url", default=None,
+                   help="API 模式下覆盖 VLM_BASE_URL。")
+    # 故意不暴露 --vlm-api-key：避免密钥进 shell 历史 / 进程列表。
     return p
 
 

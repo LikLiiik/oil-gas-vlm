@@ -7,13 +7,15 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import numpy as np
 
-from pipeline import downstream
+from pipeline import Pipeline, downstream
 from pipeline.downstream._shared import normalize_depth_ranges as _normalize_ranges
+from pipeline.downstream.base import _REGISTRY
 from pipeline.vlm import extract_json
 from schemas import (
     WORKFLOW_PLAN_SCHEMA, WORKFLOW_VERIFICATION_SCHEMA, validate_output,
@@ -96,6 +98,40 @@ def test_registry_can_override():
     from pipeline.downstream.sam import Sam
     downstream.register(Sam())
 
+def test_plan_normalization_removes_runtime_unavailable_model():
+    original = _REGISTRY.get("cig_fault")
+    class UnavailableCigFault:
+        name = "cig_fault"
+        description = "unavailable test model"
+        required_fields = []
+        output_shape = ""
+        @staticmethod
+        def runtime_status():
+            return False, "test runtime is missing"
+    downstream.register(UnavailableCigFault())
+    plan = {
+        "scene_understanding": "test",
+        "analysis_status": "suspected",
+        "visual_evidence": [],
+        "workflow_steps": [{
+            "step": 1, "model": "cig_fault", "image_name": "seismic_inline",
+            "reason": "test", "instruction": {"task": "fault_detection"},
+        }],
+    }
+    try:
+        normalized = Pipeline._normalize_competition_plan(
+            plan, SimpleNamespace(manifest={"well_logs": {}}),
+            allowed_image_names={"seismic_inline"},
+        )
+    finally:
+        if original is None:
+            _REGISTRY.pop("cig_fault", None)
+        else:
+            _REGISTRY["cig_fault"] = original
+    assert normalized["workflow_steps"] == []
+    assert "removed unavailable model 'cig_fault'" in " ".join(
+        normalized["plan_adjustments"])
+
 def test_traditional_code_handles_vlm_flat_ranges():
     """曾在真实 smoke test 里出现的 case：VLM 给了扁平 range 导致 0 结果。"""
     np.random.seed(0)
@@ -128,7 +164,75 @@ _VALID_TC_STEP = {
 }
 
 def _plan(*steps):
-    return {"scene_understanding": "test", "workflow_steps": list(steps)}
+    normalized = [
+        {"image_name": "test_image", "reason": "unit test", **step}
+        for step in steps
+    ]
+    return {
+        "scene_understanding": "test",
+        "analysis_status": "insufficient",
+        "visual_evidence": [{
+            "image_name": "test_image", "class_name": "unknown",
+            "status": "insufficient", "observations": [], "confidence": 0.5,
+        }],
+        "workflow_steps": normalized,
+    }
+
+def test_plan_schema_accepts_no_target_with_no_steps():
+    plan = _plan()
+    plan["analysis_status"] = "no_target_visible"
+    plan["visual_evidence"][0]["status"] = "absent"
+    ok, errors = validate_output(WORKFLOW_PLAN_SCHEMA, plan)
+    assert ok, errors
+
+def test_null_bbox_candidate_is_tolerated_then_downgraded_and_not_executed():
+    plan = {
+        "scene_understanding": "coarse view", "analysis_status": "suspected",
+        "visual_evidence": [{
+            "image_name": "seismic_local_patch", "class_name": "channel",
+            "status": "suspected", "bbox_xyxy_norm": None,
+            "observations": ["unlocalized amplitude variation"], "confidence": 0.4,
+        }],
+        "workflow_steps": [{
+            "step": 1, "model": "attribute_extractor",
+            "image_name": "seismic_local_patch", "reason": "test",
+            "instruction": {"attributes": ["envelope"]},
+        }],
+    }
+    ok, errors = validate_output(WORKFLOW_PLAN_SCHEMA, plan)
+    assert ok, errors
+    image = SimpleNamespace(
+        name="seismic_local_patch", physical_view="local_horizontal_patch",
+        native_shape=[17, 17],
+    )
+    normalized = Pipeline._normalize_competition_plan(
+        plan, SimpleNamespace(manifest={"well_logs": {}}, images=[image]),
+        allowed_image_names={"seismic_local_patch"},
+    )
+    assert normalized["visual_evidence"][0]["status"] == "insufficient"
+    assert normalized["workflow_steps"] == []
+
+def test_absent_fault_evidence_cannot_trigger_fault_detector():
+    plan = {
+        "scene_understanding": "continuous reflectors",
+        "analysis_status": "no_target_visible",
+        "visual_evidence": [{
+            "image_name": "seismic_inline", "class_name": "fault",
+            "status": "absent", "bbox_xyxy_norm": None,
+            "observations": ["no reflector offset"], "confidence": 0.9,
+        }],
+        "workflow_steps": [{
+            "step": 1, "model": "seismic_domain_model",
+            "image_name": "seismic_inline", "reason": "systematic scan",
+            "instruction": {"task": "fault_detection"},
+        }],
+    }
+    normalized = Pipeline._normalize_competition_plan(
+        plan, SimpleNamespace(manifest={"well_logs": {}}, images=[]),
+        allowed_image_names={"seismic_inline"},
+    )
+    assert normalized["workflow_steps"] == []
+    assert "no localized" in " ".join(normalized["plan_adjustments"])
 
 def test_plan_schema_accepts_valid():
     ok, _ = validate_output(WORKFLOW_PLAN_SCHEMA, _plan(_VALID_SDM_STEP, _VALID_TC_STEP))

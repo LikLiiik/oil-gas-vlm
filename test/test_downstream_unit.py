@@ -62,7 +62,22 @@ def test_desc_includes_all_models():
 # ── Schema 校验：新模型合法指令 ──────────────────────────────────────────────
 
 def _plan(*steps):
-    return {"scene_understanding": "test", "workflow_steps": list(steps)}
+    normalized = [
+        {"image_name": "test_image", "reason": "unit test", **step}
+        for step in steps
+    ]
+    return {
+        "scene_understanding": "test",
+        "analysis_status": "insufficient",
+        "visual_evidence": [{
+            "image_name": "test_image",
+            "class_name": "unknown",
+            "status": "insufficient",
+            "observations": [],
+            "confidence": 0.5,
+        }],
+        "workflow_steps": normalized,
+    }
 
 
 def test_schema_accepts_horizon_tracker():

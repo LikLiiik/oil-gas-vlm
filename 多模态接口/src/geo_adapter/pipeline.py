@@ -40,7 +40,11 @@ from geo_adapter.schemas.manifest import (
     WellLogsInfo,
 )
 from geo_adapter.schemas.model_output import ExpectedModelOutput
-from geo_adapter.schemas.results import InspectionResult, PrepareResult, ValidationResult
+from geo_adapter.schemas.results import (
+    InspectionResult,
+    PrepareResult,
+    ValidationResult,
+)
 from geo_adapter.semantics.curve_mapper import CANONICAL_SLOTS, PHYSICAL_QUANTITIES
 from geo_adapter.visualization.seismic import save_seismic_images
 from geo_adapter.visualization.well_log import save_well_log_images
@@ -90,7 +94,9 @@ def _read_optional(
         return None
 
 
-def _collect_inputs(config: AdapterConfig) -> tuple[
+def _collect_inputs(
+    config: AdapterConfig,
+) -> tuple[
     SeismicData | None,
     WellLogData | None,
     dict[str, Any] | None,
@@ -102,10 +108,26 @@ def _collect_inputs(config: AdapterConfig) -> tuple[
 ]:
     warnings: list[str] = []
     errors: list[str] = []
-    alias_path = _config_resource(config, config.curve_aliases_path, "curve_aliases.yaml")
-    seismic = _read_optional("seismic", config.inputs.seismic, lambda: read_seismic(config), warnings, errors)
-    well = _read_optional("well_log", config.inputs.well_log, lambda: read_well_log(config, alias_path), warnings, errors)
-    location = _read_optional("well_location", config.inputs.well_location, lambda: read_well_location(config), warnings, errors)
+    alias_path = _config_resource(
+        config, config.curve_aliases_path, "curve_aliases.yaml"
+    )
+    seismic = _read_optional(
+        "seismic", config.inputs.seismic, lambda: read_seismic(config), warnings, errors
+    )
+    well = _read_optional(
+        "well_log",
+        config.inputs.well_log,
+        lambda: read_well_log(config, alias_path),
+        warnings,
+        errors,
+    )
+    location = _read_optional(
+        "well_location",
+        config.inputs.well_location,
+        lambda: read_well_location(config),
+        warnings,
+        errors,
+    )
     trajectory = _read_optional(
         "trajectory",
         config.inputs.trajectory,
@@ -118,10 +140,16 @@ def _collect_inputs(config: AdapterConfig) -> tuple[
     except (GeoAdapterError, ValueError, OSError) as exc:
         if config.inputs.time_depth.optional:
             warnings.append(f"time_depth 不可用: {exc}")
-            time_depth = TimeDepthData(False, warnings=[str(exc)], limitations=["vertical_alignment_unavailable"])
+            time_depth = TimeDepthData(
+                False,
+                warnings=[str(exc)],
+                limitations=["vertical_alignment_unavailable"],
+            )
         else:
             errors.append(f"time_depth 处理失败: {exc}")
-            time_depth = TimeDepthData(False, limitations=["vertical_alignment_unavailable"])
+            time_depth = TimeDepthData(
+                False, limitations=["vertical_alignment_unavailable"]
+            )
 
     if seismic:
         warnings.extend(seismic.warnings)
@@ -147,14 +175,25 @@ def _collect_inputs(config: AdapterConfig) -> tuple[
     )
     if seismic is None and well is None:
         errors.append("地震和测井均不可用，无法准备样本")
-    return seismic, well, location, trajectory, time_depth, alignment, list(dict.fromkeys(warnings)), errors
+    return (
+        seismic,
+        well,
+        location,
+        trajectory,
+        time_depth,
+        alignment,
+        list(dict.fromkeys(warnings)),
+        errors,
+    )
 
 
 def inspect_geo_sample(config_path: str | Path) -> InspectionResult:
     """Inspect configured inputs without writing a run package."""
     try:
         config = load_config(config_path)
-        seismic, well, location, trajectory, time_depth, alignment, warnings, errors = _collect_inputs(config)
+        seismic, well, location, trajectory, time_depth, alignment, warnings, errors = (
+            _collect_inputs(config)
+        )
     except (GeoAdapterError, ValueError, OSError) as exc:
         return InspectionResult(success=False, errors=[str(exc)])
     inputs: dict[str, Any] = {
@@ -163,7 +202,14 @@ def inspect_geo_sample(config_path: str | Path) -> InspectionResult:
         "alignment": alignment,
         "seismic": None
         if seismic is None
-        else {"path": str(seismic.source_path), "shape": seismic.shape, "domain": seismic.domain, "views": list(seismic.views), "crs": seismic.crs, "qc": seismic.qc},
+        else {
+            "path": str(seismic.source_path),
+            "shape": seismic.shape,
+            "domain": seismic.domain,
+            "views": list(seismic.views),
+            "crs": seismic.crs,
+            "qc": seismic.qc,
+        },
         "well_logs": None
         if well is None
         else {
@@ -186,7 +232,11 @@ def inspect_geo_sample(config_path: str | Path) -> InspectionResult:
         "well_location": location,
         "trajectory": None
         if trajectory is None
-        else {"available": trajectory.available, "quality": trajectory.quality, "qc": trajectory.qc},
+        else {
+            "available": trajectory.available,
+            "quality": trajectory.quality,
+            "qc": trajectory.qc,
+        },
         "time_depth": {
             "available": time_depth.available,
             "source": time_depth.source,
@@ -195,7 +245,9 @@ def inspect_geo_sample(config_path: str | Path) -> InspectionResult:
             "limitations": time_depth.limitations,
         },
     }
-    return InspectionResult(success=not errors, inputs=inputs, warnings=warnings, errors=errors)
+    return InspectionResult(
+        success=not errors, inputs=inputs, warnings=warnings, errors=errors
+    )
 
 
 def _prepare_output(directory: Path, overwrite: bool) -> None:
@@ -208,7 +260,15 @@ def _prepare_output(directory: Path, overwrite: bool) -> None:
         if not target.is_dir():
             raise InputDataError(f"输出路径不是目录: {target}")
         shutil.rmtree(target)
-    for relative in ("assets/seismic", "assets/well_logs", "arrays", "tables", "prompts", "qc", "schemas"):
+    for relative in (
+        "assets/seismic",
+        "assets/well_logs",
+        "arrays",
+        "tables",
+        "prompts",
+        "qc",
+        "schemas",
+    ):
         (target / relative).mkdir(parents=True, exist_ok=True)
 
 
@@ -216,7 +276,9 @@ def _save_seismic_arrays(data: SeismicData, run_dir: Path) -> dict[str, dict[str
     outputs: dict[str, dict[str, Any]] = {}
     for index, (name, view) in enumerate(data.views.items()):
         raw_name = "seismic_raw.npy" if index == 0 else f"seismic_{name}_raw.npy"
-        processed_name = "seismic_processed.npy" if index == 0 else f"seismic_{name}_processed.npy"
+        processed_name = (
+            "seismic_processed.npy" if index == 0 else f"seismic_{name}_processed.npy"
+        )
         raw_path = run_dir / "arrays" / raw_name
         processed_path = run_dir / "arrays" / processed_name
         np.save(raw_path, np.asarray(view.raw), allow_pickle=False)
@@ -232,14 +294,16 @@ def _save_seismic_arrays(data: SeismicData, run_dir: Path) -> dict[str, dict[str
                 "type": "index_mapping",
                 "x_axis": view.axis_labels[0],
                 "y_axis": view.axis_labels[1],
-                "limitations": ["physical coordinate arrays were not provided"] if data.source_format in {"npy", "npz"} else [],
+                "limitations": ["physical coordinate arrays were not provided"]
+                if data.source_format in {"npy", "npz"}
+                else [],
             },
             "normalization": view.normalization,
         }
     return outputs
 
 
-def _save_well_arrays(data: WellLogData, run_dir: Path) -> None:
+def _save_well_arrays(data: WellLogData, run_dir: Path) -> dict[str, Any]:
     rows = len(data.depth)
     values = np.zeros((rows, len(CANONICAL_SLOTS)), dtype=np.float32)
     valid = np.zeros_like(values, dtype=bool)
@@ -249,7 +313,12 @@ def _save_well_arrays(data: WellLogData, run_dir: Path) -> None:
     mapping_rows: list[dict[str, Any]] = []
     for column, slot in enumerate(CANONICAL_SLOTS):
         curve = data.curves[slot]
-        if curve.available and curve.values is not None and curve.valid_mask is not None and curve.interpolated_mask is not None:
+        if (
+            curve.available
+            and curve.values is not None
+            and curve.valid_mask is not None
+            and curve.interpolated_mask is not None
+        ):
             usable = curve.valid_mask | curve.interpolated_mask
             values[usable, column] = curve.values[usable]
             valid[:, column] = curve.valid_mask
@@ -257,7 +326,9 @@ def _save_well_arrays(data: WellLogData, run_dir: Path) -> None:
             available[column] = True
             clean[slot] = np.where(usable, curve.values, np.nan)
             if slot.startswith("RES_"):
-                clean[f"{slot}_LOG10"] = np.where(usable & (curve.values > 0), np.log10(curve.values), np.nan)
+                clean[f"{slot}_LOG10"] = np.where(
+                    usable & (curve.values > 0), np.log10(curve.values), np.nan
+                )
         else:
             clean[slot] = np.nan
         mapping_rows.append(
@@ -267,7 +338,11 @@ def _save_well_arrays(data: WellLogData, run_dir: Path) -> None:
                 "available": curve.available,
                 "selected_curve": curve.selected_curve,
                 "alternative_curves": "|".join(curve.alternative_curves),
-                "alternative_curve_details": yaml.safe_dump(curve.alternative_curve_details, allow_unicode=True, default_flow_style=True).strip(),
+                "alternative_curve_details": yaml.safe_dump(
+                    curve.alternative_curve_details,
+                    allow_unicode=True,
+                    default_flow_style=True,
+                ).strip(),
                 "original_unit": curve.original_unit,
                 "canonical_unit": curve.canonical_unit,
                 "mapping_confidence": curve.mapping_confidence,
@@ -280,11 +355,65 @@ def _save_well_arrays(data: WellLogData, run_dir: Path) -> None:
         )
     np.save(run_dir / "arrays/well_values.npy", values, allow_pickle=False)
     np.save(run_dir / "arrays/well_valid_mask.npy", valid, allow_pickle=False)
-    np.save(run_dir / "arrays/well_interpolated_mask.npy", interpolated, allow_pickle=False)
+    np.save(
+        run_dir / "arrays/well_interpolated_mask.npy", interpolated, allow_pickle=False
+    )
     np.save(run_dir / "arrays/curve_available.npy", available, allow_pickle=False)
     clean.to_csv(run_dir / "tables/well_logs_clean.csv", index=False, encoding="utf-8")
-    data.raw_frame.to_csv(run_dir / "tables/well_logs_raw.csv", index=False, encoding="utf-8")
-    pd.DataFrame(mapping_rows).to_csv(run_dir / "tables/curve_mapping.csv", index=False, encoding="utf-8")
+    data.raw_frame.to_csv(
+        run_dir / "tables/well_logs_raw.csv", index=False, encoding="utf-8"
+    )
+    pd.DataFrame(mapping_rows).to_csv(
+        run_dir / "tables/curve_mapping.csv", index=False, encoding="utf-8"
+    )
+
+    curve_stats: dict[str, dict[str, Any]] = {}
+    for slot in CANONICAL_SLOTS:
+        curve = data.curves[slot]
+        series = clean[slot].to_numpy(dtype=float)
+        finite = series[np.isfinite(series)]
+        if not curve.available or finite.size == 0:
+            continue
+        curve_stats[slot] = {
+            "unit": curve.canonical_unit,
+            "count": int(finite.size),
+            "min": float(np.min(finite)),
+            "p10": float(np.percentile(finite, 10)),
+            "median": float(np.median(finite)),
+            "mean": float(np.mean(finite)),
+            "p90": float(np.percentile(finite, 90)),
+            "max": float(np.max(finite)),
+        }
+
+    sample_indices = np.unique(
+        np.linspace(0, max(rows - 1, 0), min(9, rows), dtype=int)
+    )
+    samples: list[dict[str, Any]] = []
+    for row_index in sample_indices:
+        values_at_depth: dict[str, float] = {}
+        for slot in CANONICAL_SLOTS:
+            value = clean.iloc[int(row_index)][slot]
+            if pd.notna(value):
+                values_at_depth[slot] = float(value)
+        samples.append(
+            {
+                "depth": float(data.depth[int(row_index)]),
+                "values": values_at_depth,
+            }
+        )
+
+    summary = {
+        "schema_version": "1.0",
+        "source": "structured_well_log_table",
+        "policy": "authoritative_for_numeric_values; PNG is trend-only",
+        "depth_axis": {"name": data.depth_name, "unit": data.depth_unit},
+        "depth_range": [float(np.min(data.depth)), float(np.max(data.depth))],
+        "sample_count": rows,
+        "curve_stats": curve_stats,
+        "representative_samples": samples,
+    }
+    write_json(run_dir / "tables/well_numeric_summary.json", summary)
+    return summary
 
 
 def _curve_manifest(data: WellLogData | None) -> dict[str, CurveInfo]:
@@ -315,7 +444,9 @@ def _curve_manifest(data: WellLogData | None) -> dict[str, CurveInfo]:
             missing_ratio=curve.missing_ratio,
             values_path="arrays/well_values.npy" if curve.available else None,
             valid_mask_path="arrays/well_valid_mask.npy" if curve.available else None,
-            interpolated_mask_path="arrays/well_interpolated_mask.npy" if curve.available else None,
+            interpolated_mask_path="arrays/well_interpolated_mask.npy"
+            if curve.available
+            else None,
             investigation_depth=curve.investigation_depth,
             measurement_family=curve.measurement_family,
             preprocessing=preprocessing,
@@ -330,15 +461,33 @@ def _input_records(config: AdapterConfig) -> list[InputFileRecord]:
     for role in ("seismic", "well_log", "well_location", "trajectory", "time_depth"):
         path = getattr(config.inputs, role).path
         if path is not None and path.is_file():
-            records.append(InputFileRecord(role=role, path=str(path), size_bytes=path.stat().st_size, sha256=sha256_file(path)))
+            records.append(
+                InputFileRecord(
+                    role=role,
+                    path=str(path),
+                    size_bytes=path.stat().st_size,
+                    sha256=sha256_file(path),
+                )
+            )
     control = config.processing.time_depth.calibration.control_points_path
     if control is not None and control.is_file():
-        records.append(InputFileRecord(role="time_depth_control_points", path=str(control), size_bytes=control.stat().st_size, sha256=sha256_file(control)))
+        records.append(
+            InputFileRecord(
+                role="time_depth_control_points",
+                path=str(control),
+                size_bytes=control.stat().st_size,
+                sha256=sha256_file(control),
+            )
+        )
     return records
 
 
 def _time_depth_manifest(data: TimeDepthData, table_path: str | None) -> TimeDepthInfo:
-    finite = pd.DataFrame() if data.frame is None else data.frame.dropna(subset=["depth", "twt_ms"])
+    finite = (
+        pd.DataFrame()
+        if data.frame is None
+        else data.frame.dropna(subset=["depth", "twt_ms"])
+    )
     if data.measured:
         status = "measured"
     elif data.calibrated:
@@ -352,11 +501,23 @@ def _time_depth_manifest(data: TimeDepthData, table_path: str | None) -> TimeDep
         source=data.source,
         table_path=table_path,
         integration_depth_axis=data.integration_depth_axis,
-        depth_range=[float(finite["depth"].min()), float(finite["depth"].max())] if not finite.empty else None,
-        twt_range_ms=[float(finite["twt_ms"].min()), float(finite["twt_ms"].max())] if not finite.empty else None,
+        depth_range=[float(finite["depth"].min()), float(finite["depth"].max())]
+        if not finite.empty
+        else None,
+        twt_range_ms=[float(finite["twt_ms"].min()), float(finite["twt_ms"].max())]
+        if not finite.empty
+        else None,
         calibration=CalibrationInfo(
             status=status,
-            method=("measured_or_provided_table" if data.measured else "affine_control_points" if data.calibrated else "uncalibrated" if data.available else None),
+            method=(
+                "measured_or_provided_table"
+                if data.measured
+                else "affine_control_points"
+                if data.calibrated
+                else "uncalibrated"
+                if data.available
+                else None
+            ),
             t0_ms=data.t0_ms,
             replacement_velocity_m_s=data.replacement_velocity_m_s,
             control_point_count=data.control_point_count,
@@ -381,47 +542,111 @@ def prepare_geo_sample(config_path: str | Path) -> PrepareResult:
     LOGGER.info("Preparing sample %s in %s", config.sample_id, run_dir)
     resolved_config = config.model_dump(mode="json")
     (run_dir / "input_config.yaml").write_text(
-        yaml.safe_dump(resolved_config, allow_unicode=True, sort_keys=False), encoding="utf-8"
+        yaml.safe_dump(resolved_config, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
     )
-    seismic, well, location, trajectory, time_depth, alignment, warnings, errors = _collect_inputs(config)
+    seismic, well, location, trajectory, time_depth, alignment, warnings, errors = (
+        _collect_inputs(config)
+    )
     if errors:
-        write_json(run_dir / "qc/quality_report.json", {"status": "invalid", "warnings": warnings, "errors": errors})
-        write_json(run_dir / "qc/processing_log.json", {"sample_id": config.sample_id, "steps": [], "errors": errors})
-        (run_dir / "qc/warnings.txt").write_text("\n".join([*warnings, *errors]) + "\n", encoding="utf-8")
-        return PrepareResult(success=False, output_directory=run_dir, warnings=warnings, errors=errors, run_mode=alignment["run_mode"])
+        write_json(
+            run_dir / "qc/quality_report.json",
+            {"status": "invalid", "warnings": warnings, "errors": errors},
+        )
+        write_json(
+            run_dir / "qc/processing_log.json",
+            {"sample_id": config.sample_id, "steps": [], "errors": errors},
+        )
+        (run_dir / "qc/warnings.txt").write_text(
+            "\n".join([*warnings, *errors]) + "\n", encoding="utf-8"
+        )
+        return PrepareResult(
+            success=False,
+            output_directory=run_dir,
+            warnings=warnings,
+            errors=errors,
+            run_mode=alignment["run_mode"],
+        )
 
     seismic_images: dict[str, dict[str, str]] = {}
     well_images: dict[str, str] = {}
+    well_numeric_summary: dict[str, Any] | None = None
     seismic_views: dict[str, dict[str, Any]] = {}
     steps: list[dict[str, Any]] = []
     if seismic:
         seismic_views = _save_seismic_arrays(seismic, run_dir)
         seismic_images = save_seismic_images(seismic, run_dir / "assets/seismic")
         for name in seismic_views:
-            seismic_views[name]["model_image_path"] = Path(seismic_images[name]["model"]).relative_to(run_dir).as_posix()
-            seismic_views[name]["qc_image_path"] = Path(seismic_images[name]["qc"]).relative_to(run_dir).as_posix()
-        steps.append({"step": "seismic_read_extract_normalize", "views": list(seismic.views), "source_loaded_as_full_cube": seismic.source_format != "segy"})
+            seismic_views[name]["model_image_path"] = (
+                Path(seismic_images[name]["model"]).relative_to(run_dir).as_posix()
+            )
+            seismic_views[name]["qc_image_path"] = (
+                Path(seismic_images[name]["qc"]).relative_to(run_dir).as_posix()
+            )
+            seismic_views[name]["vlm_image_path"] = (
+                Path(seismic_images[name]["analysis"]).relative_to(run_dir).as_posix()
+            )
+        steps.append(
+            {
+                "step": "seismic_read_extract_normalize",
+                "views": list(seismic.views),
+                "source_loaded_as_full_cube": seismic.source_format != "segy",
+            }
+        )
     if well:
-        _save_well_arrays(well, run_dir)
+        well_numeric_summary = _save_well_arrays(well, run_dir)
         well_images = save_well_log_images(well, run_dir / "assets/well_logs")
-        steps.append({"step": "well_log_map_convert_mask", "slot_order": CANONICAL_SLOTS})
+        steps.append(
+            {
+                "step": "well_log_map_convert_mask",
+                "slot_order": CANONICAL_SLOTS,
+                "numeric_summary": "tables/well_numeric_summary.json",
+            }
+        )
     if location:
         write_json(run_dir / "tables/well_location_normalized.json", location)
-        steps.append({"step": "well_location_field_and_crs_check", "transformed": location.get("coordinates_transformed", False)})
+        steps.append(
+            {
+                "step": "well_location_field_and_crs_check",
+                "transformed": location.get("coordinates_transformed", False),
+            }
+        )
     trajectory_table_path = None
     if trajectory and trajectory.frame is not None:
-        trajectory.frame.to_csv(run_dir / "tables/trajectory_normalized.csv", index=False, encoding="utf-8")
+        trajectory.frame.to_csv(
+            run_dir / "tables/trajectory_normalized.csv", index=False, encoding="utf-8"
+        )
         trajectory_table_path = "tables/trajectory_normalized.csv"
-        steps.append({"step": "trajectory_normalization", "quality": trajectory.quality, "method": trajectory.computation_method})
+        steps.append(
+            {
+                "step": "trajectory_normalization",
+                "quality": trajectory.quality,
+                "method": trajectory.computation_method,
+            }
+        )
     time_depth_table_path = None
     if time_depth.available and time_depth.frame is not None:
-        time_depth.frame.to_csv(run_dir / "tables/time_depth.csv", index=False, encoding="utf-8")
+        time_depth.frame.to_csv(
+            run_dir / "tables/time_depth.csv", index=False, encoding="utf-8"
+        )
         time_depth_table_path = "tables/time_depth.csv"
-        steps.append({"step": "time_depth", "source": time_depth.source, "calibrated": time_depth.calibrated})
+        steps.append(
+            {
+                "step": "time_depth",
+                "source": time_depth.source,
+                "calibrated": time_depth.calibrated,
+            }
+        )
 
     limitations = alignment["limitations"]
     all_warnings = list(dict.fromkeys(warnings))
-    quality_status = "usable_with_limitations" if limitations else "usable_with_warnings" if all_warnings else "valid"
+    quality_status = (
+        "usable_with_limitations"
+        if limitations
+        else "usable_with_warnings"
+        if all_warnings
+        else "valid"
+    )
     seismic_manifest: dict[str, Any] = {
         "available": bool(seismic),
         "source_path": str(seismic.source_path) if seismic else None,
@@ -437,7 +662,9 @@ def prepare_geo_sample(config_path: str | Path) -> PrepareResult:
         "available": bool(trajectory and trajectory.available),
         "quality": trajectory.quality if trajectory else "missing",
         "computation_method": trajectory.computation_method if trajectory else None,
-        "subsurface_xy_available": bool(trajectory and trajectory.subsurface_xy_available),
+        "subsurface_xy_available": bool(
+            trajectory and trajectory.subsurface_xy_available
+        ),
         "table_path": trajectory_table_path,
         "qc": trajectory.qc if trajectory else {},
         "warnings": trajectory.warnings if trajectory else ["trajectory_unavailable"],
@@ -466,11 +693,19 @@ def prepare_geo_sample(config_path: str | Path) -> PrepareResult:
             )
             if well
             else None,
-            depth_range=[float(well.depth.min()), float(well.depth.max())] if well else None,
+            depth_range=[float(well.depth.min()), float(well.depth.max())]
+            if well
+            else None,
             curve_order=CANONICAL_SLOTS,
             curves=_curve_manifest(well),
+            numeric_summary_path=(
+                "tables/well_numeric_summary.json"
+                if well_numeric_summary is not None
+                else None
+            ),
         ),
-        well_location=location or {"available": False, "warnings": ["well_location_unavailable"]},
+        well_location=location
+        or {"available": False, "warnings": ["well_location_unavailable"]},
         trajectory=trajectory_manifest,
         time_depth_relation=_time_depth_manifest(time_depth, time_depth_table_path),
         alignment=AlignmentInfo(
@@ -490,14 +725,26 @@ def prepare_geo_sample(config_path: str | Path) -> PrepareResult:
     )
     write_json(run_dir / "manifest.json", manifest.model_dump(mode="json"))
     write_json(run_dir / "schemas/manifest.schema.json", Manifest.model_json_schema())
-    write_json(run_dir / "schemas/expected_model_output.schema.json", ExpectedModelOutput.model_json_schema())
+    write_json(
+        run_dir / "schemas/expected_model_output.schema.json",
+        ExpectedModelOutput.model_json_schema(),
+    )
 
-    templates = _config_resource(config, config.prompt_templates_path, "prompt_templates.yaml")
+    templates = _config_resource(
+        config, config.prompt_templates_path, "prompt_templates.yaml"
+    )
     system_prompt, user_prompt = build_prompts(manifest, templates)
     (run_dir / "prompts/system_prompt.txt").write_text(system_prompt, encoding="utf-8")
     (run_dir / "prompts/user_prompt.txt").write_text(user_prompt, encoding="utf-8")
-    request = build_request(sample_id=config.sample_id, run_dir=run_dir, seismic_images=seismic_images, well_images=well_images)
-    write_json(run_dir / "request.json", request.model_dump(mode="json", exclude_none=True))
+    request = build_request(
+        sample_id=config.sample_id,
+        run_dir=run_dir,
+        seismic_images=seismic_images,
+        well_images=well_images,
+    )
+    write_json(
+        run_dir / "request.json", request.model_dump(mode="json", exclude_none=True)
+    )
 
     quality_report = {
         "schema_version": "1.0",
@@ -505,15 +752,27 @@ def prepare_geo_sample(config_path: str | Path) -> PrepareResult:
         "status": quality_status,
         "seismic": seismic.qc if seismic else {"available": False},
         "well_logs": well.qc if well else {"available": False},
-        "well_location": None if location is None else {"available": location.get("available"), "crs": location.get("source_crs"), "warnings": location.get("warnings", [])},
+        "well_location": None
+        if location is None
+        else {
+            "available": location.get("available"),
+            "crs": location.get("source_crs"),
+            "warnings": location.get("warnings", []),
+        },
         "trajectory": None if trajectory is None else trajectory.qc,
         "time_depth": {
             "available": time_depth.available,
             "source": time_depth.source,
-            "monotonic": bool(time_depth.frame is not None and time_depth.frame.dropna(subset=["twt_ms"])["twt_ms"].is_monotonic_increasing),
+            "monotonic": bool(
+                time_depth.frame is not None
+                and time_depth.frame.dropna(subset=["twt_ms"])[
+                    "twt_ms"
+                ].is_monotonic_increasing
+            ),
             "control_point_count": time_depth.control_point_count,
             "t0_determined": time_depth.t0_ms is not None,
-            "replacement_velocity_determined": time_depth.replacement_velocity_m_s is not None,
+            "replacement_velocity_determined": time_depth.replacement_velocity_m_s
+            is not None,
             "calibrated": time_depth.calibrated,
             "rmse_ms": time_depth.rmse_ms,
             "confidence": time_depth.confidence,
@@ -532,10 +791,14 @@ def prepare_geo_sample(config_path: str | Path) -> PrepareResult:
             "software_version": __version__,
             "config_hash": manifest.provenance.config_hash,
             "steps": steps,
-            "input_files": [item.model_dump() for item in manifest.provenance.input_files],
+            "input_files": [
+                item.model_dump() for item in manifest.provenance.input_files
+            ],
         },
     )
-    (run_dir / "qc/warnings.txt").write_text(("\n".join(all_warnings) if all_warnings else "无警告") + "\n", encoding="utf-8")
+    (run_dir / "qc/warnings.txt").write_text(
+        ("\n".join(all_warnings) if all_warnings else "无警告") + "\n", encoding="utf-8"
+    )
 
     validation = validate_run_directory(run_dir)
     if not validation.success:

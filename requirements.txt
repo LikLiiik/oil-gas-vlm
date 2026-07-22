@@ -1,18 +1,30 @@
 # ============================================================================
-# Oil-Gas VLM Agent Pipeline Dependencies
+# Oil-Gas VLM Agent Pipeline — 完整依赖
 # ============================================================================
-# Usage: pip install -r requirements.txt
-#   or:  conda create -n oil-gas python=3.10 && conda activate oil-gas
-#        pip install -r requirements.txt
+# 用法（任选其一）:
+#   pip install -r requirements.txt
+#   conda create -n oil-gas python=3.10 && conda activate oil-gas && pip install -r requirements.txt
+#
+# 如果只想跑 API 模式（不需要本地 GPU / 模型权重），用更轻的：
+#   pip install -r requirements-api.txt
+#
+# ============================================================================
 
 # ---------------------------------------------------------------------------
-# Core: VLM inference (Qwen3-VL-8B)
+# Core: VLM inference (Qwen3-VL) — 本地模式必需
 # ---------------------------------------------------------------------------
 torch>=2.1.0
 transformers>=4.40.0
 Pillow>=10.0.0
 accelerate>=0.25.0             # device_map="auto" support
 # qwen-vl-utils                  # optional: Qwen official VL utilities
+
+# ---------------------------------------------------------------------------
+# Core: VLM API（OpenAI 兼容）— API 模式必需
+# ---------------------------------------------------------------------------
+openai>=1.40.0
+httpx[socks]>=0.27.0          # 支持系统 HTTP/SOCKS 代理环境
+python-dotenv>=1.0.0           # 方便本地从 .env 加载 VLM_API_KEY 等
 
 # ---------------------------------------------------------------------------
 # Core: Geoscience computation

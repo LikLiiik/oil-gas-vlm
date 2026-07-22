@@ -419,17 +419,51 @@ _TRADITIONAL_RULE_ITEM = {
     },
 }
 
+_VISUAL_EVIDENCE_ITEM = {
+    "type": "object",
+    "required": ["image_name", "class_name", "status", "observations", "confidence"],
+    "properties": {
+        "image_name": {"type": "string", "minLength": 1},
+        "class_name": {"type": "string", "minLength": 1},
+        "status": {"type": "string",
+                   "enum": ["present", "suspected", "insufficient", "absent"]},
+        "bbox_xyxy_norm": {
+            "type": ["array", "null"], "minItems": 4, "maxItems": 4,
+            "items": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+        },
+        "observations": {"type": "array",
+                         "items": {"type": "string", "minLength": 1}},
+        "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+        "limitations": {"type": "array", "items": {"type": "string"}},
+    },
+    # Null bbox is tolerated here so the pipeline can downgrade a malformed
+    # suspected claim to insufficient without paying for another API retry.
+    "allOf": [{
+        "if": {"properties": {"status": {"enum": ["present", "suspected"]}}},
+        "then": {"required": ["bbox_xyxy_norm"],
+                 "properties": {"observations": {"minItems": 1}}},
+    }],
+}
+
 WORKFLOW_PLAN_SCHEMA = {
     "type": "object",
-    "required": ["scene_understanding", "workflow_steps"],
+    "required": ["scene_understanding", "analysis_status",
+                 "visual_evidence", "workflow_steps"],
     "properties": {
         "scene_understanding": {"type": "string", "minLength": 1},
+        "analysis_status": {
+            "type": "string",
+            "enum": ["evidence_present", "suspected", "insufficient",
+                     "no_target_visible"],
+        },
+        "visual_evidence": {"type": "array", "minItems": 1,
+                            "items": _VISUAL_EVIDENCE_ITEM},
         "workflow_steps": {
             "type": "array",
-            "minItems": 1,
+            "minItems": 0,
             "items": {
                 "type": "object",
-                "required": ["step", "model", "instruction"],
+                "required": ["step", "model", "image_name", "reason", "instruction"],
                 "properties": {
                     "step":        {"type": "integer", "minimum": 1},
                     "model":       {"type": "string",
@@ -442,6 +476,11 @@ WORKFLOW_PLAN_SCHEMA = {
                                              "well_log_ml"]},
                     "reason":      {"type": "string"},
                     "image_name":  {"type": "string"},
+                    "execution_mode": {
+                        "type": "string",
+                        "enum": ["candidate_validation", "systematic_scan",
+                                 "numeric_analysis"],
+                    },
                     "instruction": {"type": "object"},
                 },
                 # 按 model 强制 instruction 必需字段

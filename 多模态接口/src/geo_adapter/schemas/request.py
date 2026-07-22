@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -11,8 +11,12 @@ class ContentItem(BaseModel):
     type: Literal["text", "image", "json"]
     name: str | None = None
     path: str | None = None
+    analysis_path: str | None = None
     text_path: str | None = None
     physical_view: str | None = None
+    native_shape: list[int] | None = None
+    axis_labels: list[str] | None = None
+    source_indices: dict[str, Any] | None = None
 
 
 class Message(BaseModel):
